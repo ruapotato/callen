@@ -1,0 +1,24 @@
+Callen.py can read DTMF Tones
+The plan is to grow this into an answering machine with options like:
+  Press one to ring phone
+  Press two to leave a message
+  Call Blocking
+  Custom greeting
+  Code to start phone alarm and IM GPS (lost phones)
+
+Issues:
+Audio does not line up right with DTMF output (About 5s ahead)
+
+#Notes
+#source for DTMF Tones
+youtube-dl -f bestaudio --extract-audio --audio-format mp3 --audio-quality 0 https://www.youtube.com/watch?v=qg9xrP_U1Cg
+mv ./Memorize\ 0-9\ DTMF\ Tones-qg9xrP_U1Cg.mp3 DTMF.mp3
+
+#create new wav file
+ffmpeg -i ./DTMF.mp3 -acodec pcm_s16le -ac 1 -ar 44100 ./DTMF.wav
+
+#cli example
+run:
+  sox -t wav -r 44100 ./DTMF.wav -esigned-integer -b16 -r 22050 -t raw - | tee ./recode.raw | sox -esigned-integer -b16 -r 22050 -t raw - -t wav - | tee ./recode.wav | play -
+And:
+  tail -f recode.raw | multimon-ng -t raw -a DTMF -
