@@ -6,8 +6,6 @@ The plan is to grow this into an answering machine with options like:
   Custom greeting
   Code to start phone alarm and IM GPS (lost phones)
 
-Issues:
-Audio does not line up right with DTMF output (About 5s ahead)
 
 #Notes
 #source for DTMF Tones
@@ -19,6 +17,8 @@ ffmpeg -i ./DTMF.mp3 -acodec pcm_s16le -ac 1 -ar 44100 ./DTMF.wav
 
 #cli example
 run:
-  sox -t wav -r 44100 ./DTMF.wav -esigned-integer -b16 -r 22050 -t raw - | tee ./recode.raw | sox -esigned-integer -b16 -r 22050 -t raw - -t wav - | tee ./recode.wav | play -
-And:
-  tail -f recode.raw | multimon-ng -t raw -a DTMF -
+  cat ./DTMF.wav | tee ./recode.wav | sox -t wav -r 44100 - -esigned-integer -b16 -r 22050 -t raw - | pv -qL 44100 | multimon-ng -t raw -a DTMF -
+
+For audio:
+  tail -f -n +1 ./recode.wav | play -
+

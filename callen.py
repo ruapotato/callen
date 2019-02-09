@@ -22,47 +22,53 @@ mainDir = os.path.dirname(os.path.realpath(__file__))
 callDir = mainDir + "/calls"
 
 
-#sox -t wav -r 44100 ./DTMF.wav -esigned-integer -b16 -r 22050 -t raw - | tee ./recode.raw | sox -esigned-integer -b16 -r 22050 -t raw - -t wav - | tee ./recode.wav | play -v 0 -
+#cat ./DTMF.wav | tee ./recode.wav | sox -t wav -r 44100 - -esigned-integer -b16 -r 22050 -t raw - | pv -qL 44100 | multimon-ng -t raw -a DTMF -
+
+#tail -f -n +1 ./recode.wav | play -
+
 
 #dump the incoming call over STD out
-def callHandler(dummyFile="", sound=False):
+def callHandler(wavFile="", sound=False):
   #Play dummy wav file
-  #dummyWav = mainDir + "/samples/JustOne.wav"
-  if dummyFile == "":
-    dummyWav = mainDir + "/samples/DTMF.wav"
-  else:
-    dummyWav = dummyFile
+  #wavFile = mainDir + "/samples/JustOne.wav"
+  if wavFile == "":
+    wavFile = mainDir + "/samples/DTMF.wav"
+  
+  #TODO remove rawFile
   rawFile = mainDir + "/calls/encoded.raw"
   callSave = mainDir + "/calls/call.wav"
-  #dump dummyWav over STD out as raw and signed-integer
-  bashCMD = f"sox -t wav -r 44100 {dummyWav} -esigned-integer -b16 -r 22050 -t raw - "
-  #dump STD out to file
-  bashCMD = bashCMD + f"| tee {rawFile} "
-  #convert back to wav file
-  bashCMD = bashCMD + f"| sox -esigned-integer -b16 -r 22050 -t raw - -t wav - 2>/dev/null"
-  #dump wav file to saved calls
-  bashCMD = bashCMD + f"| tee {callSave} "
-  #control playback speed with play
-  if sound:
-    bashCMD = bashCMD + f"| play - &>/dev/null"
-  else:
-    bashCMD = bashCMD + f"| play -v 0 - &>/dev/null"
-  #reset call when done
-  bashCMD = bashCMD + f";sleep .2;echo '' > {rawFile}"
+  #touch rawFile
+  #callSave, also
   
-  #pipe raw data to multimon-ng
-  tailCMD = f"tail -f {rawFile}"
-  tailCMD = tailCMD + "| multimon-ng -t raw -a DTMF -"
-  #print (bashCMD)
+  #dump wavFile over STD out as wav, tee to file, conver to something multimon-ng can read... and read it.
+  bashCMD = f"cat {wavFile} "
+  bashCMD = bashCMD + f"| tee {callSave} "
+  bashCMD = bashCMD + f"| sox -t wav -r 44100 - -esigned-integer -b16 -r 22050 -t raw - "
+
+  #control speed of STD out
+  bashCMD = bashCMD + f"| pv -qL 44100 "
+  #Read DTMF
+  bashCMD = bashCMD + f"| multimon-ng -t raw -a DTMF -"
+  
+  #print(bashCMD)
+  if sound:
+    #pipe wav data to play cmd (if needed) 
+    soundCMD = f"tail -f -n +1 {callSave}"
+    soundCMD = soundCMD + "| play -"
+  
+  #run multimon-ng
   runningHandle = subprocess.Popen(bashCMD,
                                    preexec_fn=os.setsid,
+                                   stdout=subprocess.PIPE,
+                                   stderr=subprocess.STDOUT,
                                    universal_newlines=True, shell=True)
-  tailHandle = subprocess.Popen(tailCMD,
-                                preexec_fn=os.setsid,
-                                stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT,
-                                universal_newlines=True, shell=True)
-  for line in tailHandle.stdout:
+  if sound:
+    tailHandle = subprocess.Popen(soundCMD,
+                                  preexec_fn=os.setsid,
+                                  stdout=subprocess.DEVNULL,
+                                  stderr=subprocess.DEVNULL,
+                                  universal_newlines=True, shell=True)
+  for line in runningHandle.stdout:
     if "file truncated" in line:
       return
     #print("INFO:")
@@ -70,8 +76,8 @@ def callHandler(dummyFile="", sound=False):
       yield line
 
 
-#dummy = mainDir + "/samples/DTMF.wav"
-dummy = mainDir + "/samples/test2.wav"
-for line in callHandler(dummyFile=dummy, sound=False):
+dummy = mainDir + "/samples/DTMF.wav"
+#dummy = mainDir + "/samples/test2.wav"
+for line in callHandler(wavFile=dummy, sound=True):
   #pass
   print(line)
