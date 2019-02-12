@@ -1,0 +1,11 @@
+menu main:
+  say:Press one to ring phone, Press two to leave a message, Press three for more options
+  listen 1:ring
+  listen 2:message
+  listen 3:moreOptions
+
+
+menu moreOptions:
+  say:Press one for phone owner details, Press two to go back to main menu
+  listen 1:say:This is a librem phone, owner is protected
+  listen 2:menu
