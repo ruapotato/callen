@@ -19,6 +19,8 @@
 
 import os
 import subprocess
+import threading
+import time
 
 mainDir = os.path.dirname(os.path.realpath(__file__))
 callDir = mainDir + "/calls"
@@ -54,29 +56,64 @@ def callHandler():
     if "DTMF:" in line:
       yield line.split(":")[-1].strip()
 
+#stop all ative say() commands
+def force_stop():
+    global thread
+    thread.terminate = True
+    bashCMD = "kill -9 `pgrep -f espeak` 2> /dev/null"
+    os.system(bashCMD)
+    
 #Read x number of DTMF keys
-def DTMF(number_of_keys):
+def DTMF(number_of_keys):  
     return_data = []
     for DTMF_code in callHandler():
         return_data.append(DTMF_code)
         if len(return_data) >= number_of_keys:
+            #Stop any active say commands
+            force_stop()
+            
             return(return_data)
 
-def say(what_to_say):
-    bashCMD = f'espeak --stdout "{what_to_say}" - '
-    bashCMD = bashCMD + f"| sox -t wav -r 22050 - -esigned-integer -b16 -c 1 -r 96000 -t raw - "
-    bashCMD = bashCMD + f"| pacat -d alsa_output.platform-sound-wwan.stereo-fallback -p "
-    runningHandle = subprocess.Popen(bashCMD,
-                                     preexec_fn=os.setsid,
-                                     stdout=subprocess.PIPE,
-                                     stderr=subprocess.STDOUT,
-                                     universal_newlines=True, shell=True)
+def say(what_to_say, repeat=True):
+    global thread
+    try:
+        if thread.isAlive():
+            force_stop()
+    except NameError:
+        pass
+    if repeat:
+        thread = threading.Thread(target=bash_say, args=(what_to_say, repeat))
+        thread.daemon = True
+        thread.start()
+    else:
+        bash_say(what_to_say, repeat)
+#used by say()
+def bash_say(what_to_say, repeat):
+    t = threading.currentThread()
+    while True:
+        if getattr(t, "terminate", False):
+            break
+        bashCMD = f'espeak --stdout "{what_to_say}" - '
+        bashCMD = bashCMD + f"| sox -t wav -r 22050 - -esigned-integer -b16 -c 1 -r 96000 -t raw - "
+        bashCMD = bashCMD + f"| pacat -d alsa_output.platform-sound-wwan.stereo-fallback -p "
+        runningHandle = subprocess.Popen(bashCMD,
+                                        preexec_fn=os.setsid,
+                                        stdout=subprocess.PIPE,
+                                        stderr=subprocess.STDOUT,
+                                        universal_newlines=True, shell=True)
+        if not repeat:
+            runningHandle.communicate()
+            return()
+        else:
+            time.sleep(4)
 
     #espeak --stdout "Hello world" - | sox -t wav -r 22050 - -esigned-integer -b16 -c 1 -r 96000 -t raw - | pacat -d alsa_output.platform-sound-wwan.stereo-fallback -p
+say("Enter the pin")
 while True:
     key = DTMF(1)
     print(key)
-    say("Hello " + key[0])
+    say("Hello " + key[0], repeat=False)
+    say(f"{key}, Enter the pin again")
 
 #for line in callHandler():
   #pass
