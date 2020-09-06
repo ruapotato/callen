@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 #Callen GPL3
-#Copyright (C) 2019 David Hamner
+#Copyright (C) 2020 David Hamner
 
 #This program is free software: you can redistribute it and/or modify
 #it under the terms of the GNU General Public License as published by
@@ -21,6 +21,7 @@ import os
 import subprocess
 import threading
 import time
+import datetime
 
 mainDir = os.path.dirname(os.path.realpath(__file__))
 callDir = mainDir + "/calls"
@@ -115,7 +116,26 @@ def bash_say(what_to_say, repeat):
 def ring_phone():
     pass #TODO
 def record_call():
-    pass #TODO
+    callSave = mainDir + f"/calls/{str(datetime.datetime.now())}_call.wav"
+    
+    say("Press # when you'er done. Beep!", repeat=False)
+    #Cat audio_in over STD out, tee to file, conver to something multimon-ng can read... and read it.
+    bashCMD = f"pacat --format=s16ne --channels=1 --rate=48000 --record -d  {audio_in} "
+    bashCMD = bashCMD + f"| sox -t raw -r 48000 -L -e signed-integer -S -b 16 -c 1 - '{callSave}' rate 48000"
+    #run command in backround
+    runningHandle = subprocess.Popen(bashCMD,
+                                preexec_fn=os.setsid,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT,
+                                universal_newlines=True, shell=True)
+    #wait for #key
+    while DTMF(1)[0] != '#':
+        pass
+    #end command
+    runningHandle.terminate()
+    say("Thank you, good bye", repeat=False)
+    hangup()
+
 def hangup():
     pass #TODO
 
@@ -133,8 +153,7 @@ except Exception as e:
     #Error loading, Exit with error
     raise e
     #exit()
-        
-        
+
 
 
 #say("Enter the pin")
