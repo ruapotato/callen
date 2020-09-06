@@ -29,6 +29,7 @@ callDir = mainDir + "/calls"
 #tail -f -n +1 ./recode.wav | play -
 
 audio_in = "alsa_output.platform-sound.Audio__hw_CARD_wm8962__sink.monitor"
+audio_out = "alsa_output.platform-sound-wwan.stereo-fallback"
 script_path = os.path.dirname(os.path.realpath(__file__))
 
 #dump the incoming call over STD out
@@ -61,7 +62,7 @@ def callHandler():
 def force_stop():
     global thread
     thread.terminate = True
-    bashCMD = "kill -9 $(pgrep -f espeak) 2> /dev/null"
+    bashCMD = f"kill -9 $(pgrep -f {audio_out})"
     os.system(bashCMD)
     
 #Read x number of DTMF keys
@@ -96,7 +97,7 @@ def bash_say(what_to_say, repeat):
             break
         bashCMD = f'espeak --stdout "{what_to_say}" - '
         bashCMD = bashCMD + f"| sox -t wav -r 22050 - -esigned-integer -b16 -c 1 -r 96000 -t raw - "
-        bashCMD = bashCMD + f"| pacat -d alsa_output.platform-sound-wwan.stereo-fallback -p "
+        bashCMD = bashCMD + f"| pacat -d {audio_out} -p "
         runningHandle = subprocess.Popen(bashCMD,
                                         preexec_fn=os.setsid,
                                         stdout=subprocess.PIPE,
@@ -146,3 +147,4 @@ except Exception as e:
 #for line in callHandler():
   #pass
 #  print(line)
+
