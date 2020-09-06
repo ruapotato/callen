@@ -29,6 +29,7 @@ callDir = mainDir + "/calls"
 #tail -f -n +1 ./recode.wav | play -
 
 audio_in = "alsa_output.platform-sound.Audio__hw_CARD_wm8962__sink.monitor"
+script_path = os.path.dirname(os.path.realpath(__file__))
 
 #dump the incoming call over STD out
 def callHandler():
@@ -108,12 +109,38 @@ def bash_say(what_to_say, repeat):
             time.sleep(4)
 
     #espeak --stdout "Hello world" - | sox -t wav -r 22050 - -esigned-integer -b16 -c 1 -r 96000 -t raw - | pacat -d alsa_output.platform-sound-wwan.stereo-fallback -p
-say("Enter the pin")
-while True:
-    key = DTMF(1)
-    print(key)
-    say("Hello " + key[0], repeat=False)
-    say(f"{key}, Enter the pin again")
+
+def ring_phone():
+    pass #TODO
+def record_call():
+    pass #TODO
+def hangup():
+    pass #TODO
+
+
+#RUN IVR.py
+script = ""
+ivr_script = script_path + "/IVR.py"
+for python_line in open(ivr_script).readlines():
+    script = script + python_line
+
+try:
+    exec(script)
+except Exception as e:
+    print('Error Loading IVR' + ivr_script)
+    #Error loading, Exit with error
+    raise e
+    #exit()
+        
+        
+
+
+#say("Enter the pin")
+#while True:
+#    key = DTMF(1)
+#    print(key)
+#    say("Hello " + key[0], repeat=False)
+#    say(f"{key}, Enter the pin again")
 
 #for line in callHandler():
   #pass

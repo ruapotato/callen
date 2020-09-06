@@ -7,7 +7,7 @@
 while True:
     say("Welcome to my phone, press 1 if you're human, press 2 to leave a message")
     #read one DTMF tone key
-    reply = DTMF(1)
+    reply = DTMF(1)[0]
     if reply == '1':
         say("Good, humans are my favorite", repeat=False)
         ring_phone()
