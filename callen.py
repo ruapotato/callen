@@ -62,7 +62,15 @@ def callHandler():
 def force_stop():
     global thread
     thread.terminate = True
+<<<<<<< HEAD
     bashCMD = f"kill -9 $(pgrep -f {audio_out})"
+=======
+<<<<<<< HEAD
+    bashCMD = f"kill -9 $(pgrep -f {audio_out})"
+=======
+    bashCMD = "kill -9 $(pgrep -f espeak) 2> /dev/null"
+>>>>>>> 9b7ba4760396c1232c9132abb7862b609ed992ea
+>>>>>>> 28384752c708fa6d462aca0d4b2293699ca12061
     os.system(bashCMD)
     
 #Read x number of DTMF keys
