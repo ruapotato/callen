@@ -61,7 +61,7 @@ def callHandler():
 def force_stop():
     global thread
     thread.terminate = True
-    bashCMD = "kill -9 `pgrep -f espeak` 2> /dev/null"
+    bashCMD = "kill -9 $(pgrep -f espeak) 2> /dev/null"
     os.system(bashCMD)
     
 #Read x number of DTMF keys
@@ -106,6 +106,7 @@ def bash_say(what_to_say, repeat):
             runningHandle.communicate()
             return()
         else:
+            runningHandle.communicate()
             time.sleep(4)
 
     #espeak --stdout "Hello world" - | sox -t wav -r 22050 - -esigned-integer -b16 -c 1 -r 96000 -t raw - | pacat -d alsa_output.platform-sound-wwan.stereo-fallback -p
