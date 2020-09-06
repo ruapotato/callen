@@ -15,46 +15,30 @@
 #You should have received a copy of the GNU General Public License
 #along with this program. If not, see <http://www.gnu.org/licenses/>.
 
+#sudo apt install espeak multimon-ng pacat sox
+
 import os
 import subprocess
 
 mainDir = os.path.dirname(os.path.realpath(__file__))
 callDir = mainDir + "/calls"
 
-
-#cat ./DTMF.wav | tee ./recode.wav | sox -t wav -r 44100 - -esigned-integer -b16 -r 22050 -t raw - | pv -qL 44100 | multimon-ng -t raw -a DTMF -
-
+#pacat --format=s16ne --channels=1 --rate=48000 --record -d alsa_output.platform-sound.Audio__hw_CARD_wm8962__sink.monitor | sox -t raw -r 48000 -e signed-integer -b 16 -c 1 - -t raw -r 22050 - | multimon-ng -t raw -a DTMF -
 #tail -f -n +1 ./recode.wav | play -
 
+audio_in = "alsa_output.platform-sound.Audio__hw_CARD_wm8962__sink.monitor"
 
 #dump the incoming call over STD out
-def callHandler(wavFile="", sound=False):
-  #Play dummy wav file
-  #wavFile = mainDir + "/samples/JustOne.wav"
-  if wavFile == "":
-    wavFile = mainDir + "/samples/DTMF.wav"
+def callHandler():
+  callSave = mainDir + "/calls/call.raw"
   
-  #TODO remove rawFile
-  rawFile = mainDir + "/calls/encoded.raw"
-  callSave = mainDir + "/calls/call.wav"
-  #touch rawFile
-  #callSave, also
-  
-  #dump wavFile over STD out as wav, tee to file, conver to something multimon-ng can read... and read it.
-  bashCMD = f"cat {wavFile} "
+  #Cat audio_in over STD out, tee to file, conver to something multimon-ng can read... and read it.
+  bashCMD = f"pacat --format=s16ne --channels=1 --rate=48000 --record -d  {audio_in} "
   bashCMD = bashCMD + f"| tee {callSave} "
-  bashCMD = bashCMD + f"| sox -t wav -r 44100 - -esigned-integer -b16 -r 22050 -t raw - "
+  bashCMD = bashCMD + f"| sox -t raw -r 48000 -e signed-integer -b 16 -c 1 - -t raw -r 22050 -  "
 
-  #control speed of STD out
-  bashCMD = bashCMD + f"| pv -qL 44100 "
   #Read DTMF
   bashCMD = bashCMD + f"| multimon-ng -t raw -a DTMF -"
-  
-  #print(bashCMD)
-  if sound:
-    #pipe wav data to play cmd (if needed) 
-    soundCMD = f"tail -f -n +1 {callSave}"
-    soundCMD = soundCMD + "| play -"
   
   #run multimon-ng
   runningHandle = subprocess.Popen(bashCMD,
@@ -62,22 +46,38 @@ def callHandler(wavFile="", sound=False):
                                    stdout=subprocess.PIPE,
                                    stderr=subprocess.STDOUT,
                                    universal_newlines=True, shell=True)
-  if sound:
-    tailHandle = subprocess.Popen(soundCMD,
-                                  preexec_fn=os.setsid,
-                                  stdout=subprocess.DEVNULL,
-                                  stderr=subprocess.DEVNULL,
-                                  universal_newlines=True, shell=True)
+
   for line in runningHandle.stdout:
     if "file truncated" in line:
       return
     #print("INFO:")
     if "DTMF:" in line:
-      yield line
+      yield line.split(":")[-1].strip()
 
+#Read x number of DTMF keys
+def DTMF(number_of_keys):
+    return_data = []
+    for DTMF_code in callHandler():
+        return_data.append(DTMF_code)
+        if len(return_data) >= number_of_keys:
+            return(return_data)
 
-dummy = mainDir + "/samples/DTMF.wav"
-#dummy = mainDir + "/samples/test2.wav"
-for line in callHandler(wavFile=dummy, sound=True):
+def say(what_to_say):
+    bashCMD = f'espeak --stdout "{what_to_say}" - '
+    bashCMD = bashCMD + f"| sox -t wav -r 22050 - -esigned-integer -b16 -c 1 -r 96000 -t raw - "
+    bashCMD = bashCMD + f"| pacat -d alsa_output.platform-sound-wwan.stereo-fallback -p "
+    runningHandle = subprocess.Popen(bashCMD,
+                                     preexec_fn=os.setsid,
+                                     stdout=subprocess.PIPE,
+                                     stderr=subprocess.STDOUT,
+                                     universal_newlines=True, shell=True)
+
+    #espeak --stdout "Hello world" - | sox -t wav -r 22050 - -esigned-integer -b16 -c 1 -r 96000 -t raw - | pacat -d alsa_output.platform-sound-wwan.stereo-fallback -p
+while True:
+    key = DTMF(1)
+    print(key)
+    say("Hello " + key[0])
+
+#for line in callHandler():
   #pass
-  print(line)
+#  print(line)

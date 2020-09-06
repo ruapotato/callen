@@ -22,3 +22,37 @@ run:
 For audio:
   tail -f -n +1 ./recode.wav | play -
 
+------------------------------------
+#play
+paplay -d alsa_output.platform-sound-wwan.stereo-fallback ./samples/JustOne.wav
+
+
+#Listen
+--------
+pacat --format=s16ne --channels=1 --rate=48000 --record -d alsa_output.platform-sound.Audio__hw_CARD_wm8962__sink.monitor | sox -t raw -r 48000 -e signed-integer -b 16 -c 1 - -t raw -r 22050 - | multimon-ng -t raw -a DTMF -
+-------------
+
+
+#OLD
+pacat --format=s16ne --channels=1 --rate=48000 --record -d alsa_output.platform-sound-wwan.stereo-fallback.monitor | sox -t raw -r 48000 -L -e signed-integer -S -b 16 -c 1 - "output.wav" rate 48000
+cat ./output.wav | sox -t wav -r 48000 - -esigned-integer -b16 -r 22050 -t raw - | pv -qL 44100 | multimon-ng -t raw -a DTMF -
+
+#old
+pacmd list-sink-inputs
+pactl list short sources
+pactl list short sinks
+(sink: 0 = Voice call audio (from mic))
+paplay -d 0 ./test.wav
+
+
+pacat --format=s16ne --channels=1 --rate=48002 --record -d alsa_input.platform-sound-wwan.stereo-fallback | sox -t raw -r 48002  -e signed-integer -b 16 -c 2 - -t wav - rate 48000 |  pv -qL 48000 | multimon-ng -t raw -a DTMF -
+
+
+
+| pv -qL 44100 | multimon-ng -t raw -a DTMF -
+
+pactl load-module module-null-sink sink_name=steam
+pacmd list-sink-inputs
+#find new index (13) and sink (1)
+pactl move-sink-input 13 1
+parec -d steam.monitor
