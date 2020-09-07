@@ -1,6 +1,6 @@
 # Callen
 
-(pronounce call'n. Example: who's call'n?)
+(pronounced call'n. Example: who's call'n?)
 This GPL3 IVR (Interactive Voice Response) is targeted at the L5 running PureOS.
 
 # Setup:
