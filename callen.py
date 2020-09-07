@@ -137,33 +137,70 @@ def record_call():
     hangup()
 
 def hangup():
-    pass #TODO
+    #echo -ne "AT+CHUP\r\n" | tee /dev/ttyUSB3
+    bashCMD = f'echo -ne "AT+CHUP\r\n" | sudo tee /dev/ttyUSB3'
+    #run command in backround
+    runningHandle = subprocess.Popen(bashCMD,
+                                preexec_fn=os.setsid,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT,
+                                universal_newlines=True, shell=True)
 
-
-#RUN IVR.py
+#Setup IVR script:
 script = ""
 ivr_script = script_path + "/IVR.py"
 for python_line in open(ivr_script).readlines():
     script = script + python_line
 
-try:
-    exec(script)
-except Exception as e:
-    print('Error Loading IVR' + ivr_script)
-    #Error loading, Exit with error
-    raise e
-    #exit()
+
+#Pickup calls and run IVR.py
+#sudo cat /dev/ttyUSB3
+#Look for:
+#+CLIP: "+15030000000",145,,,,0
+#RUN:
+#echo -ne "ATA\r\n" | sudo tee /dev/ttyUSB3
+
+#clean up old processes if needed:
+bashCMD2 = f"for i in $(pgrep -f /dev/ttyUSB3); do sudo kill $i; done"
+os.system(bashCMD2)
+
+bashCMD = f'sudo cat /dev/ttyUSB3'
+#bashCMD = bashCMD + f"| grep CLIP"
+    
+
+runningHandle = subprocess.Popen(bashCMD,
+                            preexec_fn=os.setsid,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT,
+                            universal_newlines=True, shell=True)
 
 
+while True:
+        output = runningHandle.stdout.readline()
+        if output:
+            if "DISC" in output:
+                print("Call ended! Stoping IVR")
+                IVR_thread.terminate = True
+            elif "CLIP" in output:
+                phone_number = output.split('"')[1]
+                print("Call from: " + phone_number)
+                
+                #answer call
+                os.system('echo -ne "ATA\r\n" | sudo tee /dev/ttyUSB3')
+                
+                #Run ivr_script
+                try:
+                    exec(script)
+                except Exception as e:
+                    print('Error Loading IVR' + ivr_script)
+                    #Error loading, Exit with error
+                    raise e
+                    #exit()
+                #Run IVR() from ivr_script
+                IVR_thread = threading.Thread(target=IVR, args=())
+                IVR_thread.daemon = True
+                IVR_thread.start()
+            #else:
+                #print("Debug: " + output)
 
-#say("Enter the pin")
-#while True:
-#    key = DTMF(1)
-#    print(key)
-#    say("Hello " + key[0], repeat=False)
-#    say(f"{key}, Enter the pin again")
-
-#for line in callHandler():
-  #pass
-#  print(line)
 

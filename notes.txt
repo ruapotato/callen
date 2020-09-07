@@ -32,6 +32,47 @@ paplay -d alsa_output.platform-sound-wwan.stereo-fallback ./samples/JustOne.wav
 pacat --format=s16ne --channels=1 --rate=48000 --record -d alsa_output.platform-sound.Audio__hw_CARD_wm8962__sink.monitor | sox -t raw -r 48000 -e signed-integer -b 16 -c 1 - -t raw -r 22050 - | multimon-ng -t raw -a DTMF -
 -------------
 
+#hangup
+echo -ne "AT+CHUP\r\n" | tee /dev/ttyUSB3
+
+cat /dev/ttyUSB3
++CRING: VOICE
+
+
++CLIP: "+15036103539",145,,,,0
+
+
++CRING: VOICE
+
+
++CLIP: "+15036103539",145,,,,0
+
+CONNECT
+
+
++DISC: 5,1,0,16,"+15036103539",145
+
+^MODE: 9
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 #OLD
 pacat --format=s16ne --channels=1 --rate=48000 --record -d alsa_output.platform-sound-wwan.stereo-fallback.monitor | sox -t raw -r 48000 -L -e signed-integer -S -b 16 -c 1 - "output.wav" rate 48000
