@@ -15,7 +15,7 @@
 #You should have received a copy of the GNU General Public License
 #along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-#sudo apt install espeak multimon-ng pacat sox
+#sudo apt install espeak multimon-ng sox pulseaudio-utils
 
 import os
 import subprocess
