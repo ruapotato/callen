@@ -29,7 +29,8 @@ callDir = mainDir + "/calls"
 #pacat --format=s16ne --channels=1 --rate=48000 --record -d alsa_output.platform-sound.Audio__hw_CARD_wm8962__sink.monitor | sox -t raw -r 48000 -e signed-integer -b 16 -c 1 - -t raw -r 22050 - | multimon-ng -t raw -a DTMF -
 #tail -f -n +1 ./recode.wav | play -
 
-audio_in = "alsa_output.platform-sound.Audio__hw_CARD_wm8962__sink.monitor"
+#audio_in = "alsa_output.platform-sound.Audio__hw_CARD_wm8962__sink.monitor"
+audio_in = "alsa_output.platform-sound.HiFi__hw_CARD_wm8962__sink.monitor"
 audio_out = "alsa_output.platform-sound-wwan.stereo-fallback"
 script_path = os.path.dirname(os.path.realpath(__file__))
 
@@ -45,6 +46,7 @@ def callHandler():
   #Read DTMF
   bashCMD = bashCMD + f"| multimon-ng -t raw -a DTMF -"
   
+  print(f"Running: {bashCMD}")
   #run multimon-ng
   runningHandle = subprocess.Popen(bashCMD,
                                    preexec_fn=os.setsid,
@@ -81,6 +83,7 @@ def say(what_to_say, repeat=True):
     global thread
     try:
         if thread.isAlive():
+            print("Force stop say thread")
             force_stop()
     except NameError:
         pass
@@ -94,11 +97,14 @@ def say(what_to_say, repeat=True):
 def bash_say(what_to_say, repeat):
     t = threading.currentThread()
     while True:
+        print(f"bash_say: {what_to_say}")
         if getattr(t, "terminate", False):
+            print("Terminate bash_say")
             break
         bashCMD = f'espeak --stdout "{what_to_say}" - '
         bashCMD = bashCMD + f"| sox -t wav -r 22050 - -esigned-integer -b16 -c 1 -r 96000 -t raw - "
         bashCMD = bashCMD + f"| pacat -d {audio_out} -p "
+        print(bashCMD)
         runningHandle = subprocess.Popen(bashCMD,
                                         preexec_fn=os.setsid,
                                         stdout=subprocess.PIPE,
