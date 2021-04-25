@@ -1,3 +1,6 @@
+#Install
+ - sudo apt install espeak multimon-ng sox pulseaudio-utils minimodem
+
 Callen.py can read DTMF Tones
 The plan is to grow this into an answering machine with options like:
   Press one to ring phone
@@ -8,6 +11,8 @@ The plan is to grow this into an answering machine with options like:
 
 
 #Notes
+make a call: gio open tel:+1503
+
 #source for DTMF Tones
 youtube-dl -f bestaudio --extract-audio --audio-format mp3 --audio-quality 0 https://www.youtube.com/watch?v=qg9xrP_U1Cg
 mv ./Memorize\ 0-9\ DTMF\ Tones-qg9xrP_U1Cg.mp3 DTMF.mp3
@@ -57,6 +62,22 @@ CONNECT
 
 
 
+#Data encoding
+--------------
+AFSK2400
+minimodem
+server (read) minimodem --rx 1200
+client (write) echo "stuff" | minimodem --tx 1200
+
+
+
+#newish
+pactl list short sources
+pactl list short sinks
+
+#Fix for https://source.puri.sm/Librem5/librem5-base/-/blob/pureos/byzantium/default/audio/pulse/librem5.pa#L22
+pactl unload-module module-role-cork
+pactl load-module module-role-cork
 
 
 
@@ -65,14 +86,7 @@ CONNECT
 
 
 
-
-
-
-
-
-
-
-
+alsa_output.platform-sound-wwan.stereo-fallback.monitor
 
 #OLD
 pacat --format=s16ne --channels=1 --rate=48000 --record -d alsa_output.platform-sound-wwan.stereo-fallback.monitor | sox -t raw -r 48000 -L -e signed-integer -S -b 16 -c 1 - "output.wav" rate 48000

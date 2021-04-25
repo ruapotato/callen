@@ -34,6 +34,13 @@ audio_in = "alsa_output.platform-sound.HiFi__hw_CARD_wm8962__sink.monitor"
 audio_out = "alsa_output.platform-sound-wwan.stereo-fallback"
 script_path = os.path.dirname(os.path.realpath(__file__))
 
+#reinit module-role-cork
+def setup_audio():
+    bashCMD = f"pactl unload-module module-role-cork"
+    os.system(bashCMD)
+    bashCMD = f"pactl load-module module-role-cork"
+    os.system(bashCMD)
+
 #dump the incoming call over STD out
 def callHandler():
   callSave = mainDir + "/calls/call.raw"
@@ -180,6 +187,8 @@ runningHandle = subprocess.Popen(bashCMD,
                             stderr=subprocess.STDOUT,
                             universal_newlines=True, shell=True)
 
+#Fix for https://source.puri.sm/Librem5/librem5-base/-/blob/pureos/byzantium/default/audio/pulse/librem5.pa#L22
+setup_audio()
 
 while True:
         output = runningHandle.stdout.readline()
