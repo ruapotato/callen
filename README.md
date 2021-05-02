@@ -1,6 +1,6 @@
 # Callen
 
-(pronounced call'n. Example: who's call'n?)
+Project moved and renamed: https://source.puri.sm/david.hamner/ivrbbs/
 This GPL3 IVR (Interactive Voice Response) is targeted at the L5 running PureOS.
 
 # Setup:
