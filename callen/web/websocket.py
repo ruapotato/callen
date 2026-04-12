@@ -59,9 +59,16 @@ def setup_event_forwarding(event_bus, loop):
     event_bus.subscribe("call.incoming", lambda d: on_call_event({"type": "incoming", **d}))
     event_bus.subscribe("call.bridged", lambda d: on_call_event({"type": "bridged", **d}))
     event_bus.subscribe("call.ended", lambda d: on_call_event({"type": "ended", **d}))
+    event_bus.subscribe("call.bridge_completed", lambda d: on_call_event({"type": "bridge_completed", **d}))
     event_bus.subscribe("operator.status_changed", lambda d: on_call_event({"type": "operator_status", **d}))
     event_bus.subscribe("email.received", lambda d: on_call_event({"type": "email", **d}))
+    # Forward transcript events to both the per-call channel AND the
+    # global /ws/calls channel so the dashboard can refresh whichever
+    # incident is currently focused without needing to subscribe to
+    # every individual /ws/transcript/<id> endpoint.
     event_bus.subscribe("transcript.update", on_transcript)
+    event_bus.subscribe("transcript.update",
+                        lambda d: on_call_event({"type": "transcript", **d}))
 
 
 @bp.websocket("/ws/calls")

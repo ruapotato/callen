@@ -103,6 +103,31 @@ async def get_agent_run(run_id):
     })
 
 
+@bp.websocket("/ws/agent")
+async def ws_agent_global():
+    """Global feed of run_started / run_complete lifecycle events so the
+    dashboard can pop the drawer open on autonomous backend-triggered runs
+    that the frontend didn't initiate itself."""
+    runner = _runner()
+    if runner is None:
+        await websocket.close(1011, "agent runner not configured")
+        return
+
+    queue = await runner.subscribe_global()
+    try:
+        while True:
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=30.0)
+            except asyncio.TimeoutError:
+                await websocket.send(json.dumps({"type": "heartbeat"}))
+                continue
+            await websocket.send(json.dumps(event))
+    except asyncio.CancelledError:
+        pass
+    finally:
+        await runner.unsubscribe_global(queue)
+
+
 @bp.websocket("/ws/agent/<run_id>")
 async def ws_agent(run_id):
     """Stream events for one run to the browser.

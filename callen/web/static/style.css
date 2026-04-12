@@ -158,6 +158,82 @@ body {
 .panel-detail   { background: var(--bg); }
 .panel-context  { border-left: 1px solid var(--border); }
 
+/* --- Live strip (always visible, active calls) --- */
+.live-strip {
+    background: linear-gradient(180deg, rgba(248, 81, 73, 0.08), transparent);
+    border-bottom: 1px solid var(--red);
+}
+
+.live-strip.hidden { display: none; }
+
+.live-strip-header {
+    padding: 8px 14px 4px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: var(--red);
+    font-weight: 700;
+}
+
+.live-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--red);
+    box-shadow: 0 0 0 0 rgba(248, 81, 73, 0.6);
+    animation: live-pulse 1.4s ease-out infinite;
+}
+
+@keyframes live-pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(248, 81, 73, 0.8); }
+    70%  { box-shadow: 0 0 0 8px rgba(248, 81, 73, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(248, 81, 73, 0); }
+}
+
+.live-strip-count {
+    margin-left: auto;
+    background: var(--red);
+    color: white;
+    padding: 1px 8px;
+    border-radius: 10px;
+    font-size: 10px;
+}
+
+.live-strip-list {
+    padding: 4px 8px 10px;
+}
+
+.live-call-item {
+    padding: 8px 10px;
+    background: rgba(248, 81, 73, 0.05);
+    border: 1px solid rgba(248, 81, 73, 0.3);
+    border-radius: 4px;
+    margin-bottom: 4px;
+    cursor: pointer;
+    font-size: 12px;
+}
+
+.live-call-item:hover {
+    background: rgba(248, 81, 73, 0.1);
+    border-color: var(--red);
+}
+
+.live-call-item .lc-caller {
+    font-weight: 600;
+    color: var(--text);
+}
+
+.live-call-item .lc-meta {
+    color: var(--text-dim);
+    font-size: 10px;
+    display: flex;
+    gap: 6px;
+    margin-top: 2px;
+}
+
 /* --- Queue panel --- */
 .queue-tabs {
     display: flex;
@@ -786,6 +862,12 @@ body {
     color: var(--text);
     font-family: var(--sans);
     font-size: 13px;
+}
+
+.agent-prompt-echo.auto {
+    border-left-color: var(--green);
+    background: rgba(63, 185, 80, 0.08);
+    font-style: italic;
 }
 
 .agent-drawer-body {

@@ -119,7 +119,41 @@ async function refreshCounts() {
         $('count-pending').textContent = `${state.counts.pending} pending`;
         $('count-flagged').textContent = `${state.counts.flagged} flagged`;
         $('count-active').textContent = `${state.counts.active} active`;
+
+        // Update the sticky Live strip on the left panel. This is
+        // separate from the queue tabs so active calls stay visible
+        // no matter what tab the operator is on.
+        renderLiveStrip(active);
     } catch (e) { console.error(e); }
+}
+
+function renderLiveStrip(activeCalls) {
+    const strip = $('live-strip');
+    const list = $('live-strip-list');
+    const countEl = $('live-strip-count');
+
+    if (!activeCalls || activeCalls.length === 0) {
+        strip.classList.add('hidden');
+        return;
+    }
+
+    strip.classList.remove('hidden');
+    countEl.textContent = activeCalls.length;
+    clear(list);
+
+    for (const c of activeCalls) {
+        const item = el('div', {
+            class: 'live-call-item',
+            onclick: () => selectActiveCall(c.id),
+        }, [
+            el('div', { class: 'lc-caller' }, c.caller_id || 'unknown'),
+            el('div', { class: 'lc-meta' }, [
+                el('span', { class: `status-pill ${c.state}` }, c.state),
+                el('span', {}, fmtDuration(c.duration)),
+            ]),
+        ]);
+        list.appendChild(item);
+    }
 }
 
 // ============ Queue tabs ============
@@ -175,10 +209,6 @@ async function loadQueue() {
             case 'flagged-emails':
                 items = await api('/emails?status=flagged&limit=100');
                 renderEmailsQueue(items, 'flagged');
-                break;
-            case 'active-calls':
-                items = await api('/calls');
-                renderCallsQueue(items);
                 break;
             case 'contacts':
                 items = await api('/contacts?limit=200');
@@ -1097,11 +1127,99 @@ function connectCallsWs() {
     const ws = new WebSocket(`${proto}//${location.host}/ws/calls`);
     state.callsWs = ws;
 
-    ws.onmessage = () => {
+    let pendingRefresh = null;
+
+    ws.onmessage = (evt) => {
+        let data;
+        try { data = JSON.parse(evt.data); } catch { return; }
+
+        // Always refresh counts + the live strip
         refreshCounts();
-        if (state.currentTab === 'active-calls' || state.currentTab === 'incidents') loadQueue();
+        if (state.currentTab === 'incidents') loadQueue();
+
+        // If a transcript segment came in and the operator is
+        // viewing the relevant incident, debounce-refresh it so
+        // the live transcript updates on screen.
+        if (data.type === 'transcript' && state.selectedKind === 'incident' && state.selectedId) {
+            if (pendingRefresh) clearTimeout(pendingRefresh);
+            pendingRefresh = setTimeout(() => {
+                selectIncident(state.selectedId);
+                pendingRefresh = null;
+            }, 600);
+        }
+
+        // When a call ends / bridge completes, re-pull the active-call
+        // context so the operator sees the call disappear from LIVE
+        if ((data.type === 'ended' || data.type === 'bridge_completed')
+            && state.selectedKind === 'incident' && state.selectedId) {
+            setTimeout(() => selectIncident(state.selectedId), 300);
+        }
+
+        // When a new inbound call arrives, auto-jump to its incident
+        // so the operator sees it immediately. Only if they aren't
+        // already viewing something specific (to avoid yanking focus).
+        if (data.type === 'incoming' && data.call_id && !state.selectedId) {
+            // Give the backend a moment to attach incident_id to the call
+            setTimeout(async () => {
+                try {
+                    const c = await api(`/history/${data.call_id}`);
+                    if (c.incident_id) selectIncident(c.incident_id);
+                } catch {}
+            }, 500);
+        }
     };
     ws.onclose = () => setTimeout(connectCallsWs, 3000);
+}
+
+// ============ Global agent feed (autonomous run notifications) ============
+function connectAgentGlobalWs() {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(`${proto}//${location.host}/ws/agent`);
+    ws.onmessage = (evt) => {
+        let data;
+        try { data = JSON.parse(evt.data); } catch { return; }
+        if (data.type === 'run_started' && data.autonomous) {
+            onAutonomousRunStarted(data);
+        } else if (data.type === 'run_complete') {
+            onAutonomousRunComplete(data);
+        }
+    };
+    ws.onclose = () => setTimeout(connectAgentGlobalWs, 3000);
+}
+
+function onAutonomousRunStarted(data) {
+    showAgentDrawer();
+    setAgentStatus('running', 'Auto-agent running…');
+    const ctx = data.context || {};
+    const label = ctx.incident_id
+        ? `Reviewing ${ctx.incident_id}` + (ctx.trigger ? ` (${ctx.trigger})` : '')
+        : 'Autonomous agent run';
+
+    // Put a conversation break + a system-origin prompt echo so the
+    // operator sees exactly what was sent on their behalf.
+    const body = $('agent-drawer-body');
+    if (body.childNodes.length > 0) {
+        body.appendChild(el('div', { class: 'agent-conversation-break' }, '— auto —'));
+    }
+    body.appendChild(el('div', {
+        class: 'agent-prompt-echo auto',
+        title: data.prompt,
+    }, `🤖 ${label}`));
+    body.scrollTop = body.scrollHeight;
+
+    $('agent-run-id').textContent = data.run_id;
+
+    // Subscribe to the run's event stream so we see its tool calls live
+    connectAgentWs(data.run_id);
+}
+
+function onAutonomousRunComplete(data) {
+    // Refresh everything — the agent may have changed state
+    refreshCounts();
+    loadQueue();
+    if (state.selectedKind === 'incident' && state.selectedId) {
+        selectIncident(state.selectedId);
+    }
 }
 
 async function loadAgentState() {
@@ -1121,6 +1239,7 @@ async function init() {
     await loadQueue();
     await loadAgentState();
     connectCallsWs();
+    connectAgentGlobalWs();
     setInterval(refreshCounts, 15000);
 }
 

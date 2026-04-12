@@ -317,6 +317,16 @@ def _run_originate(incident_id: str, destination: str, display_name: str):
                     _sip(c.hangup, pj.CallOpParam())
                 except Exception:
                     pass
+        # Critical: remove both legs from the call registry so they don't
+        # linger as zombie entries in the dashboard's live panel. Without
+        # this, every outbound call left stale rows visible until restart.
+        if _call_registry is not None:
+            for c in (tech_call, contact_call):
+                if c is not None:
+                    try:
+                        _call_registry.remove(c.uuid)
+                    except Exception:
+                        pass
         if contact_call:
             _event_bus.publish("call.ended", {"call_id": contact_call.uuid})
 

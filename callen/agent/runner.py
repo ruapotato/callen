@@ -68,6 +68,7 @@ class AgentRunner:
         self._max_runs = max_runs
         self._claude_bin = claude_bin or shutil.which("claude") or "claude"
         self._subscribers: dict[str, set[asyncio.Queue]] = {}
+        self._global_subscribers: set[asyncio.Queue] = set()
         self._lock = asyncio.Lock()
         self._continue_next = False
         self._conversation_turn = 0
@@ -159,6 +160,31 @@ class AgentRunner:
                         else:
                             lines.append(f"  - {t}")
 
+                # Recent transcript lines across all calls on this incident —
+                # this is how the operator can ask the agent about what's
+                # being said LIVE during an active call without the agent
+                # needing to make an extra tool call.
+                segments = self._db.get_transcript_for_incident(incident_id)
+                if segments:
+                    tail = segments[-15:]
+                    lines.append("Latest transcript lines:")
+                    for seg in tail:
+                        speaker = seg.get("speaker", "?")
+                        text = (seg.get("text") or "").strip()
+                        offset = seg.get("timestamp_offset") or 0
+                        mm = int(offset // 60)
+                        ss = int(offset % 60)
+                        lines.append(f"  [{mm:02d}:{ss:02d} {speaker}] {text}")
+
+                # Open todos — surface them so the agent can reference
+                # them without a tool call
+                todos = [t for t in (self._db.list_todos(incident_id) or [])
+                         if not t.get("done")]
+                if todos:
+                    lines.append("Open todos:")
+                    for t in todos[:10]:
+                        lines.append(f"  - {t['text']}")
+
                 return "\n".join(lines)
 
             contact_id = context.get("contact_id")
@@ -235,6 +261,18 @@ class AgentRunner:
 
         # Spawn in a task so the caller can return the run_id immediately
         asyncio.create_task(self._execute(run))
+        # Notify any global subscribers that a new run is starting.
+        # This is how the dashboard learns about autonomous runs kicked
+        # off by the backend (e.g. after a bridge ends or a voicemail
+        # is transcribed) — the frontend can pop the drawer open.
+        await self._broadcast_global({
+            "type": "run_started",
+            "run_id": run_id,
+            "prompt": prompt,
+            "autonomous": bool(run.context.get("_autonomous")),
+            "context": {k: v for k, v in run.context.items() if not k.startswith("_")},
+            "started_at": run.started_at,
+        })
         return run
 
     def reset_conversation(self):
@@ -413,10 +451,41 @@ class AgentRunner:
                 if not self._subscribers[run_id]:
                     del self._subscribers[run_id]
 
+    async def subscribe_global(self) -> asyncio.Queue:
+        """Subscribe to lifecycle events for ALL runs — mainly
+        run_started notifications so the dashboard can pop the drawer
+        open on autonomous agent runs fired by the backend."""
+        q = asyncio.Queue()
+        async with self._lock:
+            self._global_subscribers.add(q)
+        return q
+
+    async def unsubscribe_global(self, queue: asyncio.Queue):
+        async with self._lock:
+            self._global_subscribers.discard(queue)
+
     async def _broadcast(self, run_id: str, event: dict):
         subs = set()
         async with self._lock:
             subs = set(self._subscribers.get(run_id, set()))
+        for q in subs:
+            try:
+                await q.put(event)
+            except Exception:
+                pass
+        # Also surface run-lifecycle events to global subscribers so
+        # the dashboard can track autonomous runs it didn't start.
+        if event.get("type") == "complete":
+            await self._broadcast_global({
+                "type": "run_complete",
+                "run_id": run_id,
+                "status": event.get("status"),
+                "result": event.get("result"),
+            })
+
+    async def _broadcast_global(self, event: dict):
+        async with self._lock:
+            subs = set(self._global_subscribers)
         for q in subs:
             try:
                 await q.put(event)
