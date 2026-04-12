@@ -1,5 +1,4 @@
 #!/bin/bash
-# Get a transcript for an incident or specific call
-# Usage: ./tools/get-transcript --incident INC-0001 --text
-#        ./tools/get-transcript --call <uuid>
-exec python3 -m callen.cli get-transcript "$@"
+# Callen CLI wrapper — auto-dispatches to: python3 -m callen.cli get-transcript
+cd "$(dirname "$(readlink -f "$0")")/.." || exit 1
+exec python3 -m callen.cli "get-transcript" "$@"

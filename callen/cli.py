@@ -296,6 +296,243 @@ def cmd_get_audio(args):
         print(str(src_path))
 
 
+# --- Operator status ---
+
+
+def cmd_get_operator_status(args):
+    db = _db(args)
+    _out({"status": db.get_operator_status()}, pretty=args.pretty)
+
+
+def cmd_set_operator_status(args):
+    db = _db(args)
+    if args.status not in ("available", "busy", "dnd"):
+        _err(f"invalid status: {args.status}")
+    db.set_operator_status(args.status)
+    _out({"status": args.status})
+
+
+# --- Merge operations ---
+
+
+def cmd_merge_contacts(args):
+    """Merge source contact into destination. Phones, emails, and incidents
+    move to the destination; the source contact row is deleted."""
+    db = _db(args)
+    src = db.get_contact(args.source)
+    dst = db.get_contact(args.destination)
+    if not src:
+        _err(f"source contact not found: {args.source}")
+    if not dst:
+        _err(f"destination contact not found: {args.destination}")
+    if args.source == args.destination:
+        _err("source and destination are the same")
+
+    conn = db._conn()
+    # Move phones (on UNIQUE collision keep the destination's existing row)
+    conn.execute(
+        "UPDATE OR IGNORE contact_phones SET contact_id = ? WHERE contact_id = ?",
+        (args.destination, args.source),
+    )
+    conn.execute("DELETE FROM contact_phones WHERE contact_id = ?", (args.source,))
+    # Move emails
+    conn.execute(
+        "UPDATE OR IGNORE contact_emails SET contact_id = ? WHERE contact_id = ?",
+        (args.destination, args.source),
+    )
+    conn.execute("DELETE FROM contact_emails WHERE contact_id = ?", (args.source,))
+    # Move incidents
+    conn.execute(
+        "UPDATE incidents SET contact_id = ? WHERE contact_id = ?",
+        (args.destination, args.source),
+    )
+    conn.execute("DELETE FROM contacts WHERE id = ?", (args.source,))
+    conn.commit()
+
+    # Log merge as a note on every affected incident? Just log once on the dst.
+    # Simpler: return the merged contact.
+    _out({
+        "merged_into": args.destination,
+        "removed": args.source,
+        "contact": db.get_contact(args.destination),
+    }, pretty=args.pretty)
+
+
+def cmd_merge_incidents(args):
+    """Merge source incident into destination. Calls, emails, and timeline
+    entries move to the destination; source is marked closed with a note."""
+    db = _db(args)
+    src = db.get_incident(args.source)
+    dst = db.get_incident(args.destination)
+    if not src:
+        _err(f"source incident not found: {args.source}")
+    if not dst:
+        _err(f"destination incident not found: {args.destination}")
+    if args.source == args.destination:
+        _err("source and destination are the same")
+
+    conn = db._conn()
+    # Move calls
+    conn.execute(
+        "UPDATE calls SET incident_id = ? WHERE incident_id = ?",
+        (args.destination, args.source),
+    )
+    # Move emails
+    conn.execute(
+        "UPDATE emails SET incident_id = ? WHERE incident_id = ?",
+        (args.destination, args.source),
+    )
+    # Move timeline entries
+    conn.execute(
+        "UPDATE incident_entries SET incident_id = ? WHERE incident_id = ?",
+        (args.destination, args.source),
+    )
+    conn.commit()
+
+    # Add a merge record
+    db.add_incident_entry(
+        args.destination, "note", author="cli",
+        payload={"text": f"Merged from {args.source}"},
+    )
+    # Close the source incident with a pointer
+    db.update_incident(args.source, status="closed")
+    db.add_incident_entry(
+        args.source, "note", author="cli",
+        payload={"text": f"Merged into {args.destination}"},
+    )
+
+    _out({
+        "merged_into": args.destination,
+        "source_closed": args.source,
+        "incident": db.get_incident(args.destination),
+    }, pretty=args.pretty)
+
+
+# --- Add phone/email to existing contact ---
+
+
+def cmd_add_phone(args):
+    db = _db(args)
+    c = db.get_contact(args.contact_id)
+    if not c:
+        _err(f"contact not found: {args.contact_id}")
+    e164 = normalize_phone(args.phone) or args.phone
+    conn = db._conn()
+    # If the phone already belongs to someone, refuse
+    row = conn.execute(
+        "SELECT contact_id FROM contact_phones WHERE e164 = ?", (e164,)
+    ).fetchone()
+    if row:
+        if row["contact_id"] != args.contact_id:
+            _err(f"phone {e164} already belongs to {row['contact_id']} — "
+                 f"use merge-contacts to combine", code=1)
+        _out(db.get_contact(args.contact_id), pretty=args.pretty)
+        return
+
+    conn.execute(
+        """INSERT INTO contact_phones (contact_id, e164, created_at)
+           VALUES (?, ?, unixepoch('subsec'))""",
+        (args.contact_id, e164),
+    )
+    conn.commit()
+    _out(db.get_contact(args.contact_id), pretty=args.pretty)
+
+
+def cmd_add_email(args):
+    db = _db(args)
+    c = db.get_contact(args.contact_id)
+    if not c:
+        _err(f"contact not found: {args.contact_id}")
+    addr = args.email.strip().lower()
+    conn = db._conn()
+    row = conn.execute(
+        "SELECT contact_id FROM contact_emails WHERE address = ?", (addr,)
+    ).fetchone()
+    if row:
+        if row["contact_id"] != args.contact_id:
+            _err(f"email {addr} already belongs to {row['contact_id']} — "
+                 f"use merge-contacts to combine", code=1)
+        _out(db.get_contact(args.contact_id), pretty=args.pretty)
+        return
+
+    conn.execute(
+        """INSERT INTO contact_emails (contact_id, address, created_at)
+           VALUES (?, ?, unixepoch('subsec'))""",
+        (args.contact_id, addr),
+    )
+    conn.commit()
+    _out(db.get_contact(args.contact_id), pretty=args.pretty)
+
+
+# --- Search ---
+
+
+def cmd_search(args):
+    """Find contacts and incidents matching a query string.
+
+    Matches partial phone digits, email substrings, contact display_name,
+    and incident subject.
+    """
+    db = _db(args)
+    q = args.query.strip()
+    if not q:
+        _err("empty query")
+
+    q_lower = q.lower()
+    q_digits = "".join(c for c in q if c.isdigit())
+
+    conn = db._conn()
+    results: dict = {"contacts": [], "incidents": []}
+
+    # Contact phone match
+    if q_digits:
+        rows = conn.execute(
+            """SELECT DISTINCT c.id, c.display_name
+               FROM contacts c JOIN contact_phones p ON c.id = p.contact_id
+               WHERE p.e164 LIKE ? LIMIT 20""",
+            (f"%{q_digits}%",),
+        ).fetchall()
+        for r in rows:
+            results["contacts"].append({"id": r["id"], "display_name": r["display_name"], "match": "phone"})
+
+    # Contact name/email match
+    rows = conn.execute(
+        """SELECT DISTINCT c.id, c.display_name
+           FROM contacts c
+           LEFT JOIN contact_emails e ON c.id = e.contact_id
+           WHERE LOWER(c.display_name) LIKE ? OR LOWER(e.address) LIKE ?
+           LIMIT 20""",
+        (f"%{q_lower}%", f"%{q_lower}%"),
+    ).fetchall()
+    seen = {c["id"] for c in results["contacts"]}
+    for r in rows:
+        if r["id"] not in seen:
+            results["contacts"].append({"id": r["id"], "display_name": r["display_name"], "match": "name_or_email"})
+            seen.add(r["id"])
+
+    # Incident subject match
+    rows = conn.execute(
+        "SELECT id, subject, status FROM incidents WHERE LOWER(subject) LIKE ? LIMIT 20",
+        (f"%{q_lower}%",),
+    ).fetchall()
+    for r in rows:
+        results["incidents"].append(dict(r))
+
+    if args.pretty:
+        if results["contacts"]:
+            print("Contacts:")
+            for c in results["contacts"]:
+                print(f"  {c['id']}  {c['display_name'] or '(unnamed)'}  ({c['match']})")
+        if results["incidents"]:
+            print("Incidents:")
+            for i in results["incidents"]:
+                print(f"  {i['id']}  [{i['status']}]  {i['subject']}")
+        if not results["contacts"] and not results["incidents"]:
+            print("(no matches)")
+    else:
+        _out(results)
+
+
 # --- Outbound call (stub, wired in Phase 9) ---
 
 
@@ -418,6 +655,41 @@ def build_parser() -> argparse.ArgumentParser:
     )
     pp.add_argument("--out", help="copy the WAV to this path")
     pp.set_defaults(func=cmd_get_audio)
+
+    # operator status
+    pp = sub.add_parser("get-operator-status", help="Current operator status")
+    pp.set_defaults(func=cmd_get_operator_status)
+
+    pp = sub.add_parser("set-operator-status", help="Set operator status")
+    pp.add_argument("status", choices=["available", "busy", "dnd"])
+    pp.set_defaults(func=cmd_set_operator_status)
+
+    # merges
+    pp = sub.add_parser("merge-contacts", help="Merge one contact into another")
+    pp.add_argument("source", help="source contact id (will be removed)")
+    pp.add_argument("destination", help="destination contact id (kept)")
+    pp.set_defaults(func=cmd_merge_contacts)
+
+    pp = sub.add_parser("merge-incidents", help="Merge one incident into another")
+    pp.add_argument("source", help="source incident id (will be closed)")
+    pp.add_argument("destination", help="destination incident id (kept)")
+    pp.set_defaults(func=cmd_merge_incidents)
+
+    # add phone/email to contact
+    pp = sub.add_parser("add-phone", help="Attach a phone number to an existing contact")
+    pp.add_argument("contact_id")
+    pp.add_argument("phone")
+    pp.set_defaults(func=cmd_add_phone)
+
+    pp = sub.add_parser("add-email", help="Attach an email to an existing contact")
+    pp.add_argument("contact_id")
+    pp.add_argument("email")
+    pp.set_defaults(func=cmd_add_email)
+
+    # search
+    pp = sub.add_parser("search", help="Fuzzy search contacts and incidents")
+    pp.add_argument("query", help="partial name, phone digits, email, or subject")
+    pp.set_defaults(func=cmd_search)
 
     # originate
     pp = sub.add_parser("originate", help="Originate an outbound call (Phase 9)")

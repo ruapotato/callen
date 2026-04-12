@@ -1,4 +1,4 @@
 #!/bin/bash
-# List incidents / tickets
-# Usage: ./tools/list-incidents [--status open] [--contact CON-0001] [--pretty]
-exec python3 -m callen.cli list-incidents "$@"
+# Callen CLI wrapper — auto-dispatches to: python3 -m callen.cli list-incidents
+cd "$(dirname "$(readlink -f "$0")")/.." || exit 1
+exec python3 -m callen.cli "list-incidents" "$@"

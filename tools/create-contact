@@ -1,4 +1,4 @@
 #!/bin/bash
-# Create a contact
-# Usage: ./tools/create-contact --name "Jane Doe" --phone 15551234567 --email jane@example.com
-exec python3 -m callen.cli create-contact "$@"
+# Callen CLI wrapper — auto-dispatches to: python3 -m callen.cli create-contact
+cd "$(dirname "$(readlink -f "$0")")/.." || exit 1
+exec python3 -m callen.cli "create-contact" "$@"

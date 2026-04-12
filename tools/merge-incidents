@@ -1,0 +1,4 @@
+#!/bin/bash
+# Callen CLI wrapper — auto-dispatches to: python3 -m callen.cli merge-incidents
+cd "$(dirname "$(readlink -f "$0")")/.." || exit 1
+exec python3 -m callen.cli "merge-incidents" "$@"

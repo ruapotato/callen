@@ -1,5 +1,4 @@
 #!/bin/bash
-# Add an internal note to an incident (author defaults to "agent")
-# Usage: ./tools/note-incident INC-0001 "Caller needs callback after 2pm"
-#        echo "long note" | ./tools/note-incident INC-0001 -
-exec python3 -m callen.cli note-incident "$@"
+# Callen CLI wrapper — auto-dispatches to: python3 -m callen.cli note-incident
+cd "$(dirname "$(readlink -f "$0")")/.." || exit 1
+exec python3 -m callen.cli "note-incident" "$@"

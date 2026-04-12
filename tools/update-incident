@@ -1,5 +1,4 @@
 #!/bin/bash
-# Update an incident's fields
-# Usage: ./tools/update-incident INC-0001 --status resolved --priority high \
-#                                --subject "Router config" --add-label billing
-exec python3 -m callen.cli update-incident "$@"
+# Callen CLI wrapper — auto-dispatches to: python3 -m callen.cli update-incident
+cd "$(dirname "$(readlink -f "$0")")/.." || exit 1
+exec python3 -m callen.cli "update-incident" "$@"

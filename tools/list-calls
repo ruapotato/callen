@@ -1,4 +1,4 @@
 #!/bin/bash
-# List raw call records (use list-incidents for ticket-oriented view)
-# Usage: ./tools/list-calls [--limit 50]
-exec python3 -m callen.cli list-calls "$@"
+# Callen CLI wrapper — auto-dispatches to: python3 -m callen.cli list-calls
+cd "$(dirname "$(readlink -f "$0")")/.." || exit 1
+exec python3 -m callen.cli "list-calls" "$@"

@@ -191,6 +191,23 @@ echo "longer note" | ./tools/note-incident INC-0042 -
 
 # Raw calls
 ./tools/list-calls
+
+# Operator status (shared with the web dashboard)
+./tools/get-operator-status
+./tools/set-operator-status busy        # available / busy / dnd
+
+# Merging (for deduplication)
+./tools/merge-contacts CON-0006 CON-0005   # fold 0006 into 0005
+./tools/merge-incidents INC-0022 INC-0021  # fold 0022 into 0021
+
+# Attach data to existing contacts
+./tools/add-phone CON-0004 15555550123
+./tools/add-email CON-0004 alt@example.com
+
+# Fuzzy search across contacts and incidents
+./tools/search "jane"
+./tools/search 5559990000
+./tools/search "router"
 ```
 
 **Typical agent flow** (heartbeat during an active call):

@@ -1,4 +1,4 @@
 #!/bin/bash
-# Fetch a contact with phones, emails, consent status, and incident history
-# Usage: ./tools/get-contact CON-0001 [--pretty]
-exec python3 -m callen.cli get-contact "$@"
+# Callen CLI wrapper — auto-dispatches to: python3 -m callen.cli get-contact
+cd "$(dirname "$(readlink -f "$0")")/.." || exit 1
+exec python3 -m callen.cli "get-contact" "$@"
