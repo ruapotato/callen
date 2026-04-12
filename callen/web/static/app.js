@@ -1037,11 +1037,13 @@ function handleAgentEvent(ev) {
     if (!ev || typeof ev !== 'object') return;
     switch (ev.type) {
         case 'assistant': {
+            // Only render tool_use blocks here. Text from the assistant
+            // is rendered ONCE at the end via the 'result' event — if we
+            // render text from the streaming assistant events too, the
+            // final message shows up twice in the drawer.
             const msg = ev.message || {};
             for (const block of msg.content || []) {
-                if (block.type === 'text' && block.text) {
-                    appendAgentLine(block.text, 'assistant');
-                } else if (block.type === 'tool_use') {
+                if (block.type === 'tool_use') {
                     const inp = block.input || {};
                     if (block.name === 'Bash' && inp.command) {
                         appendAgentLine(`$ ${inp.command}`, 'tool');
@@ -1053,7 +1055,7 @@ function handleAgentEvent(ev) {
             break;
         }
         case 'user': {
-            // Tool results
+            // Tool results (the output of a Bash command or similar)
             const msg = ev.message || {};
             for (const block of msg.content || []) {
                 if (block.type === 'tool_result') {
