@@ -637,32 +637,48 @@ class Database:
     # --- Calls ---
 
     def save_call(self, record: CallRecord):
-        self._conn().execute(
-            """INSERT OR REPLACE INTO calls
-               (id, caller_id, direction, state, started_at, answered_at,
-                ended_at, duration_seconds, was_bridged, consented,
-                caller_recording_path, tech_recording_path, voicemail_path,
-                incident_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                record.id, record.caller_id, record.direction, record.state,
-                record.started_at, record.answered_at, record.ended_at,
-                record.duration_seconds, int(record.was_bridged),
-                int(record.consented),
-                record.caller_recording_path, record.tech_recording_path,
-                record.voicemail_path, record.incident_id,
-            ),
-        )
-        self._conn().commit()
+        conn = self._conn()
+        try:
+            conn.execute(
+                """INSERT OR REPLACE INTO calls
+                   (id, caller_id, direction, state, started_at, answered_at,
+                    ended_at, duration_seconds, was_bridged, consented,
+                    caller_recording_path, tech_recording_path, voicemail_path,
+                    incident_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    record.id, record.caller_id, record.direction, record.state,
+                    record.started_at, record.answered_at, record.ended_at,
+                    record.duration_seconds, int(record.was_bridged),
+                    int(record.consented),
+                    record.caller_recording_path, record.tech_recording_path,
+                    record.voicemail_path, record.incident_id,
+                ),
+            )
+            conn.commit()
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            raise
 
     def save_transcript_segment(self, call_id: str, speaker: str,
                                  text: str, timestamp_offset: float):
-        self._conn().execute(
-            """INSERT INTO transcript_segments (call_id, speaker, text, timestamp_offset)
-               VALUES (?, ?, ?, ?)""",
-            (call_id, speaker, text, timestamp_offset),
-        )
-        self._conn().commit()
+        conn = self._conn()
+        try:
+            conn.execute(
+                """INSERT INTO transcript_segments (call_id, speaker, text, timestamp_offset)
+                   VALUES (?, ?, ?, ?)""",
+                (call_id, speaker, text, timestamp_offset),
+            )
+            conn.commit()
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            raise
 
     def save_note(self, call_id: str, text: str, author: str = "operator"):
         self._conn().execute(

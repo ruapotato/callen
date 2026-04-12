@@ -32,6 +32,7 @@ import pjsua2 as pj
 from callen.sip.call import CallenCall, CallState
 from callen.sip.dtmf import collect_dtmf
 from callen.sip import bridge as br
+from callen.storage.models import CallRecord
 from callen.ivr import api
 
 log = logging.getLogger(__name__)
@@ -203,6 +204,7 @@ def _run_originate(incident_id: str, destination: str, display_name: str):
             return
 
         contact_call.incident_id = incident_id
+        contact_call.direction = "outbound"
         if _call_registry is not None:
             _call_registry.add(contact_call)
 
@@ -234,6 +236,24 @@ def _run_originate(incident_id: str, destination: str, display_name: str):
         api.say(contact_call,
                 "This call is being recorded. Please continue.",
                 repeat=False)
+
+        # Insert a stub row in the calls table so transcript_segments.FK to
+        # calls(id) is satisfied once the transcription workers fire. This
+        # is the outbound equivalent of the inbound on_call_incoming handler.
+        try:
+            stub = CallRecord(
+                id=contact_call.uuid,
+                caller_id=clean_dest,
+                direction="outbound",
+                state="active",
+                started_at=contact_call.started_at,
+                answered_at=contact_call.answered_at or time.time(),
+                consented=True,
+                incident_id=incident_id,
+            )
+            _db.save_call(stub)
+        except Exception:
+            log.exception("[%s] Failed to save outbound call stub", incident_id)
 
         # --- Step 5: bridge + record + transcribe ---
         caller_media = contact_call.get_audio_media()

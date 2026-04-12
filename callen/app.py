@@ -58,6 +58,7 @@ def main(config_path: str = "config.toml"):
         record = CallRecord(
             id=call.uuid,
             caller_id=call.caller_id,
+            direction=getattr(call, "direction", "inbound"),
             started_at=call.started_at,
             answered_at=call.answered_at,
             ended_at=call.ended_at,
