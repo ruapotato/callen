@@ -1,0 +1,39 @@
+# Credentials — NEVER commit
+config.toml
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environment
+venv/
+.venv/
+
+# Recordings and call data
+calls/*.wav
+calls/*.raw
+voicemail/*.wav
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+
+# Voicemail recordings
+voicemail/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temp files from transcription
+*.tmp.wav

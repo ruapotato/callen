@@ -1,36 +1,68 @@
 #!/usr/bin/python3
 
-#WIP, this is not done yet!
-#Callen GPL3
-#Copyright (C) 2020 David Hamner
+# Callen GPL3
+# Copyright (C) 2020 David Hamner
+# Licensed under GNU General Public License v3
 
-#This program is free software: you can redistribute it and/or modify
-#it under the terms of the GNU General Public License as published by
-#the Free Software Foundation, either version 3 of the License, or
-#(at your option) any later version.
+# This file defines the IVR call flow.
+# Edit this file to customize how Callen handles incoming calls.
+#
+# Available functions (injected by the engine — no imports needed):
+#   say(call, text, repeat=True)       — TTS to caller (loops if repeat=True)
+#   play(call, wav_path)               — Play pre-recorded audio
+#   dtmf(call, count=1, timeout=10)    — Wait for DTMF, returns str or None
+#   bridge_to_operator(call)           — Connect caller to operator's phone
+#   record_voicemail(call)             — Record voicemail + email notification
+#   hangup(call)                       — End the call
+#   caller_id(call)                    — Get caller's phone number
+#   operator_available()               — Check if operator is available
 
-#This program is distributed in the hope that it will be useful,
-#but WITHOUT ANY WARRANTY; without even the implied warranty of
-#MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-#GNU General Public License for more details.
 
-#You should have received a copy of the GNU General Public License
-#along with this program. If not, see <http://www.gnu.org/licenses/>.
+def IVR(call):
+    # Recording consent — required before anything else.
+    # Calls to freesoftware.support are recorded and may be published.
+    say(call, (
+        "Welcome to free software dot support. "
+        "This call is recorded and may be published as educational content. "
+        "Press 1 to consent and continue, or hang up now."
+    ))
 
+    consent = dtmf(call, count=1, timeout=15)
 
-#This file is run by callen.py, This is were you define how the IVR works. 
-#record_call(), ring_phone() and hangup() all exit the script
-def IVR():
-    say("Welcome to my phone, press 1 if you're human, press 2 to leave a message")
+    if consent != '1':
+        say(call, "No consent received. Goodbye.", repeat=False)
+        hangup(call)
+        return
+
+    # Mark consent on the call object
+    call.consented_to_recording = True
+
+    # Main menu
+    say(call, (
+        "Thank you. "
+        "Press 1 to speak with a technician. "
+        "Press 2 to leave a voicemail."
+    ))
+
     while True:
-        #read one DTMF tone key
-        reply = DTMF(1)[0]
-        if reply == '1':
-            say("Good, humans are my favorite", repeat=False)
-            ring_phone()
-        elif reply == '2':
-            record_call()
-        else:
-            say("Invalid reply.", repeat=False)
-            say("Welcome to my phone, press 1 if you're human, press 2 to leave a message")
+        key = dtmf(call, count=1, timeout=10)
 
+        if key == '1':
+            if operator_available():
+                bridge_to_operator(call)
+                # After bridge ends (either party hung up), we're done
+                return
+            else:
+                say(call, (
+                    "The technician is currently on another call. "
+                    "Press 2 to leave a voicemail, or press 1 to hold."
+                ), repeat=False)
+        elif key == '2':
+            record_voicemail(call)
+            return
+        elif key is None:
+            # Timeout or disconnect — end the call
+            return
+        else:
+            say(call, "Invalid option.", repeat=False)
+            say(call, "Press 1 for a technician, or 2 for voicemail.")

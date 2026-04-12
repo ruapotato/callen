@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Callen — IVR Dashboard</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <header>
+        <h1>Callen</h1>
+        <div class="operator-controls">
+            <span style="color: var(--text-dim); font-size: 13px;">Operator:</span>
+            <button class="status-btn active" data-status="available">Available</button>
+            <button class="status-btn" data-status="busy">Busy</button>
+            <button class="status-btn" data-status="dnd">DND</button>
+        </div>
+    </header>
+
+    <div class="main-layout">
+        <div class="panel-left">
+            <h2>Active Calls</h2>
+            <div class="call-list" id="call-list">
+                <div class="empty-state">No active calls</div>
+            </div>
+        </div>
+
+        <div class="panel-center">
+            <div class="transcript-header" id="transcript-header">
+                Select a call to view transcript
+            </div>
+            <div class="transcript-container" id="transcript-container">
+                <div class="empty-state">Live transcription will appear here</div>
+            </div>
+        </div>
+
+        <div class="panel-right">
+            <h2>Notes</h2>
+            <div class="notes-list" id="notes-list"></div>
+            <div class="note-input">
+                <textarea id="note-text" placeholder="Add a note..."></textarea>
+                <button id="add-note-btn">Add Note</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="history-panel">
+        <h2>Call History</h2>
+        <table class="history-table">
+            <thead>
+                <tr>
+                    <th>Caller</th>
+                    <th>State</th>
+                    <th>Duration</th>
+                    <th>Time</th>
+                    <th>Bridged</th>
+                </tr>
+            </thead>
+            <tbody id="history-body"></tbody>
+        </table>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

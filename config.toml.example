@@ -1,0 +1,49 @@
+# Callen Configuration
+# Copy this file to config.toml and fill in your credentials.
+# config.toml is gitignored — it will NOT be committed.
+
+[sip]
+registrar = "sip:seattle1.voip.ms"  # Use your DID's POP server, NOT sip.voip.ms
+username = "YOUR_VOIPMS_ACCOUNT_NUMBER"  # Found in portal: Main Account > Account Settings (NOT the DID number)
+password = "YOUR_VOIPMS_SIP_PASSWORD_HERE"
+domain = "seattle1.voip.ms"  # Must match the registrar server
+port = 5060
+
+[operator]
+name = "David"
+cell_phone = "+15031234567"
+default_status = "available"  # "available", "busy", "dnd"
+
+[recording]
+enabled = true
+directory = "./calls"
+split_channels = true
+
+[voicemail]
+directory = "./voicemail"
+max_duration = 120  # seconds
+
+[transcription]
+enabled = true
+model = "nvidia/parakeet-tdt-0.6b-v2"
+device = "auto"  # "auto", "cuda:0", "cpu"
+chunk_seconds = 3.0
+
+[web]
+host = "127.0.0.1"
+port = 8080
+
+[email]
+enabled = true
+smtp_host = "smtp.example.com"
+smtp_port = 587
+smtp_user = "voicemail@freesoftware.support"
+smtp_password = "YOUR_SMTP_PASSWORD_HERE"
+smtp_tls = true
+from_address = "voicemail@freesoftware.support"
+to_address = "david@freesoftware.support"
+
+[general]
+db_path = "./callen.db"
+ivr_script = "./IVR.py"
+log_level = "INFO"
