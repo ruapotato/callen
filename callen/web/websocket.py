@@ -60,6 +60,7 @@ def setup_event_forwarding(event_bus, loop):
     event_bus.subscribe("call.bridged", lambda d: on_call_event({"type": "bridged", **d}))
     event_bus.subscribe("call.ended", lambda d: on_call_event({"type": "ended", **d}))
     event_bus.subscribe("operator.status_changed", lambda d: on_call_event({"type": "operator_status", **d}))
+    event_bus.subscribe("email.received", lambda d: on_call_event({"type": "email", **d}))
     event_bus.subscribe("transcript.update", on_transcript)
 
 

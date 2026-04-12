@@ -102,6 +102,118 @@ async def get_transcript(call_id):
     return jsonify(segments)
 
 
+# --- Incident-centric routes (primary dashboard API) ---
+
+
+@bp.route("/api/incidents")
+async def list_incidents():
+    """List incidents, filterable by status and contact."""
+    status = request.args.get("status")
+    contact_id = request.args.get("contact")
+    limit = request.args.get("limit", 200, type=int)
+    offset = request.args.get("offset", 0, type=int)
+    rows = _db().list_incidents(
+        status=status, contact_id=contact_id,
+        limit=limit, offset=offset,
+    )
+    return jsonify(rows)
+
+
+@bp.route("/api/incidents/<incident_id>")
+async def incident_detail(incident_id):
+    """Full incident context: timeline, calls, transcripts, contact, emails."""
+    db = _db()
+    inc = db.get_incident(incident_id)
+    if not inc:
+        return jsonify({"error": "not found"}), 404
+
+    inc["entries"] = db.list_incident_entries(incident_id)
+    inc["calls"] = db.get_calls_for_incident(incident_id)
+    inc["transcript"] = db.get_transcript_for_incident(incident_id)
+    inc["emails"] = db.list_emails_for_incident(incident_id)
+    if inc.get("contact_id"):
+        inc["contact"] = db.get_contact(inc["contact_id"])
+    return jsonify(inc)
+
+
+@bp.route("/api/incidents/<incident_id>", methods=["PATCH"])
+async def update_incident(incident_id):
+    """Update status / priority / subject / labels."""
+    data = await request.get_json() or {}
+    db = _db()
+
+    add_labels = data.get("add_labels") or None
+    remove_labels = data.get("remove_labels") or None
+
+    ok = db.update_incident(
+        incident_id,
+        status=data.get("status"),
+        priority=data.get("priority"),
+        subject=data.get("subject"),
+        assigned_to=data.get("assigned_to"),
+        add_labels=add_labels,
+        remove_labels=remove_labels,
+    )
+    if not ok:
+        return jsonify({"error": "not found"}), 404
+    return jsonify(db.get_incident(incident_id))
+
+
+@bp.route("/api/incidents/<incident_id>/notes", methods=["POST"])
+async def incident_add_note(incident_id):
+    data = await request.get_json() or {}
+    text = (data.get("text") or "").strip()
+    if not text:
+        return jsonify({"error": "text required"}), 400
+    db = _db()
+    if not db.get_incident(incident_id):
+        return jsonify({"error": "incident not found"}), 404
+    entry_id = db.add_incident_entry(
+        incident_id, "note",
+        author=data.get("author", "operator"),
+        payload={"text": text},
+    )
+    return jsonify({"entry_id": entry_id, "incident_id": incident_id})
+
+
+# --- Contacts ---
+
+
+@bp.route("/api/contacts")
+async def list_contacts():
+    limit = request.args.get("limit", 200, type=int)
+    offset = request.args.get("offset", 0, type=int)
+    return jsonify(_db().list_contacts(limit=limit, offset=offset))
+
+
+@bp.route("/api/contacts/<contact_id>")
+async def contact_detail(contact_id):
+    c = _db().get_contact(contact_id)
+    if not c:
+        return jsonify({"error": "not found"}), 404
+    c["incidents"] = _db().list_incidents(contact_id=contact_id, limit=100)
+    return jsonify(c)
+
+
+# --- Email queues ---
+
+
+@bp.route("/api/emails")
+async def list_emails():
+    """List emails by status. Defaults to 'pending'."""
+    status = request.args.get("status", "pending")
+    limit = request.args.get("limit", 100, type=int)
+    return jsonify(_db().list_emails_by_status(status, limit=limit))
+
+
+@bp.route("/api/emails/<int:email_id>")
+async def get_email(email_id):
+    e = _db().get_email(email_id)
+    if not e:
+        return jsonify({"error": "not found"}), 404
+    return jsonify(e)
+
+
 @bp.route("/api/call/originate", methods=["POST"])
 async def originate_call():
     """Kick off a technician-first outbound call.
