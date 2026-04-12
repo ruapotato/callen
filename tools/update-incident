@@ -1,0 +1,5 @@
+#!/bin/bash
+# Update an incident's fields
+# Usage: ./tools/update-incident INC-0001 --status resolved --priority high \
+#                                --subject "Router config" --add-label billing
+exec python3 -m callen.cli update-incident "$@"

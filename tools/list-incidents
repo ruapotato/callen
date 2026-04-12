@@ -1,0 +1,4 @@
+#!/bin/bash
+# List incidents / tickets
+# Usage: ./tools/list-incidents [--status open] [--contact CON-0001] [--pretty]
+exec python3 -m callen.cli list-incidents "$@"

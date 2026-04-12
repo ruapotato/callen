@@ -154,6 +154,61 @@ namespace by the engine):
 The default `IVR.py` is the freesoftware.support flow: consent gate → menu →
 bridge or voicemail.
 
+## Agent tool API (`tools/`)
+
+Callen is designed to be driven by an AI agent running in the project folder
+via Claude Code headless mode. The `tools/` directory holds short bash
+commands, each a thin wrapper around `python3 -m callen.cli`. Every command
+outputs JSON on stdout by default; pass `--pretty` for a human-readable
+format where supported.
+
+```sh
+# Tickets / incidents
+./tools/list-incidents [--status open] [--contact CON-0001]
+./tools/get-incident INC-0042
+./tools/update-incident INC-0042 --status resolved --priority high \
+                                 --subject "Router config" \
+                                 --add-label billing,networking
+./tools/note-incident INC-0042 "Caller wants a callback after 2pm"
+echo "longer note" | ./tools/note-incident INC-0042 -
+./tools/create-incident --phone 15551234567 --subject "Callback request"
+
+# Contacts (the persistent identity of a caller/emailer)
+./tools/list-contacts
+./tools/get-contact CON-0007
+./tools/create-contact --name "Jane Doe" --phone 15551234567 \
+                       --email jane@example.com
+./tools/update-contact CON-0007 --name "Jane Doe" --notes "Prefers email"
+./tools/contact-consent CON-0007 --phone 15551234567 --source manual
+./tools/contact-consent CON-0007 --email jane@example.com --source email
+
+# Transcripts and audio
+./tools/get-transcript --incident INC-0042 --text
+./tools/get-transcript --call <uuid>
+./tools/get-audio --incident INC-0042 --channel caller --out /tmp/call.wav
+./tools/get-audio --incident INC-0042 --channel tech
+./tools/get-audio --incident INC-0042 --channel voicemail
+
+# Raw calls
+./tools/list-calls
+```
+
+**Typical agent flow** (heartbeat during an active call):
+
+```sh
+./tools/list-incidents --status open --limit 1    # find the active ticket
+./tools/get-incident INC-0042                     # full context
+./tools/get-transcript --incident INC-0042 --text # latest transcript
+# reason about the transcript...
+./tools/update-incident INC-0042 \
+    --subject "Router port-forwarding issue" \
+    --add-label networking
+./tools/note-incident INC-0042 "Caller is on OpenWRT, confirmed MAC OK"
+```
+
+Every write command is idempotent and logs a timeline entry on the incident,
+so the agent can re-run without duplicating state.
+
 ## Architecture
 
 ```

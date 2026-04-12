@@ -1,0 +1,4 @@
+#!/bin/bash
+# List contacts (users of the system)
+# Usage: ./tools/list-contacts [--pretty] [--limit 50]
+exec python3 -m callen.cli list-contacts "$@"

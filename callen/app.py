@@ -65,6 +65,10 @@ def main(config_path: str = "config.toml"):
             consented=call.consented_to_recording,
             was_bridged=(call.state == CallState.BRIDGED),
             state="active" if call.ended_at is None else "completed",
+            incident_id=getattr(call, "incident_id", None),
+            caller_recording_path=getattr(call, "caller_recording_path", None),
+            tech_recording_path=getattr(call, "tech_recording_path", None),
+            voicemail_path=getattr(call, "voicemail_path", None),
         )
         try:
             db.save_call(record)
@@ -72,15 +76,51 @@ def main(config_path: str = "config.toml"):
             log.exception("Failed to save call record")
 
     def on_call_incoming(data):
-        # Insert a stub row so transcript_segments FK can reference it
         call = call_registry.get(data.get("call_id"))
-        if call:
-            _save_call_record(call)
+        if not call:
+            return
+
+        # Look up or create a contact for this caller. The contact is the
+        # persistent identity across multiple calls from the same number.
+        try:
+            contact_id, e164 = db.upsert_contact_by_phone(call.caller_id)
+            call.contact_id = contact_id
+            call.normalized_phone = e164
+
+            # Remember if this phone has already consented — the IVR script
+            # can skip the consent gate for returning callers.
+            call.prior_consent = db.phone_has_consent(e164)
+
+            # Create a fresh incident for this call
+            incident_id = db.create_incident(
+                contact_id=contact_id,
+                subject=f"Call from {e164}",
+                channel="phone",
+                status="open",
+            )
+            call.incident_id = incident_id
+            db.add_incident_entry(
+                incident_id, "call", linked_call_id=call.uuid,
+                payload={"direction": "inbound", "caller_id": e164},
+            )
+            log.info("Call %s -> contact %s, incident %s (prior_consent=%s)",
+                     call.uuid[:8], contact_id, incident_id, call.prior_consent)
+        except Exception:
+            log.exception("Failed to bind call to contact/incident")
+
+        # Insert a stub call row so transcript_segments FK can reference it
+        _save_call_record(call)
 
     def on_call_ended(data):
         call = call_registry.get(data.get("call_id"))
         if call:
             _save_call_record(call)
+            # If the caller consented during the IVR, persist it on the contact
+            if getattr(call, "consented_to_recording", False) and getattr(call, "normalized_phone", ""):
+                try:
+                    db.record_phone_consent(call.normalized_phone, source="ivr")
+                except Exception:
+                    log.exception("Failed to record phone consent")
 
     event_bus.subscribe("call.incoming", on_call_incoming)
     event_bus.subscribe("call.ended", on_call_ended)

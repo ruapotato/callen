@@ -1,0 +1,4 @@
+#!/bin/bash
+# Update a contact's display name or notes
+# Usage: ./tools/update-contact CON-0001 --name "Jane Doe" --notes "Prefers email"
+exec python3 -m callen.cli update-contact "$@"

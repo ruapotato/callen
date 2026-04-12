@@ -215,6 +215,9 @@ def bridge_to_operator(call: CallenCall):
             _sip(br.connect_calls, caller_media, tech_media)
             log.info("Call %s bridged to operator", call.uuid[:8])
 
+            # Split-channel recording
+            _start_recording(call, caller_media, tech_media)
+
             # Start live transcription on both legs
             _start_transcription(call, caller_media, tech_media)
 
@@ -222,6 +225,7 @@ def bridge_to_operator(call: CallenCall):
                    outbound_call.state != CallState.DISCONNECTED):
                 time.sleep(0.5)
 
+            _stop_recording(call)
             _stop_transcription(call, caller_media, tech_media)
             _sip(br.disconnect_calls, caller_media, tech_media)
 
@@ -282,6 +286,9 @@ def record_voicemail(call: CallenCall, prompt: str | None = None):
     recorder = _sip(CallRecorder, vm_path)
     _sip(recorder.start, media)
 
+    # Stash on the call object so the DB save picks it up
+    call.voicemail_path = vm_path
+
     _event_bus.publish("voicemail.recording", {"call_id": call.uuid})
 
     max_dur = _config.voicemail.max_duration
@@ -316,7 +323,65 @@ def operator_available() -> bool:
     return _operator_state.is_available
 
 
+def has_consented(call: CallenCall) -> bool:
+    """True if this caller's phone number has already consented to recording
+    on a previous call. Lets the IVR script skip the consent gate for
+    returning callers who already agreed once."""
+    return bool(getattr(call, "prior_consent", False))
+
+
 # --- Internal helpers (not exposed to IVR scripts) ---
+
+_active_recorders: dict[str, list] = {}
+
+
+def _start_recording(call, caller_media, tech_media):
+    """Start split-channel recording for a bridged call.
+
+    Creates two AudioMediaRecorder instances on the SIP thread: one listening
+    to the caller's leg, one listening to the technician's. The conference
+    bridge fans out each source to both the other leg and its recorder.
+    """
+    from callen.sip.media import CallRecorder
+
+    if not _config.recording.enabled:
+        return
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    rec_dir = _config.recording.directory
+    os.makedirs(rec_dir, exist_ok=True)
+
+    caller_path = os.path.join(
+        rec_dir, f"{timestamp}_{call.caller_id}_caller.wav"
+    )
+    tech_path = os.path.join(
+        rec_dir, f"{timestamp}_{call.caller_id}_tech.wav"
+    )
+
+    try:
+        caller_rec = _sip(CallRecorder, caller_path)
+        tech_rec = _sip(CallRecorder, tech_path)
+        _sip(caller_rec.start, caller_media)
+        _sip(tech_rec.start, tech_media)
+        _active_recorders[call.uuid] = [caller_rec, tech_rec]
+        call.caller_recording_path = caller_path
+        call.tech_recording_path = tech_path
+        log.info("Split-channel recording started: %s + %s", caller_path, tech_path)
+    except Exception:
+        log.exception("Failed to start recording for %s", call.uuid[:8])
+
+
+def _stop_recording(call):
+    """Stop the split-channel recorders for this call."""
+    recs = _active_recorders.pop(call.uuid, None)
+    if not recs:
+        return
+    for rec in recs:
+        try:
+            _sip(rec.stop)
+        except Exception:
+            pass
+
 
 def _start_transcription(call, caller_media, tech_media):
     """Set up AudioTaps + transcription streams for a bridged call."""

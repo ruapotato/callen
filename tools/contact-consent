@@ -1,0 +1,5 @@
+#!/bin/bash
+# Record recording-consent for a contact's phone or email
+# Usage: ./tools/contact-consent CON-0001 --phone 15551234567 --source manual
+#        ./tools/contact-consent CON-0001 --email foo@bar.com --source email
+exec python3 -m callen.cli contact-consent "$@"

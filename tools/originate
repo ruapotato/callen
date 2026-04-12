@@ -1,0 +1,4 @@
+#!/bin/bash
+# Place an outbound call (Phase 9 — not yet wired)
+# Usage: ./tools/originate INC-0001
+exec python3 -m callen.cli originate "$@"

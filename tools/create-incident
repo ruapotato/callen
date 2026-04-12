@@ -1,0 +1,5 @@
+#!/bin/bash
+# Manually create an incident
+# Usage: ./tools/create-incident --phone 15551234567 --subject "Callback req"
+#        ./tools/create-incident --contact CON-0001 --subject "Follow-up"
+exec python3 -m callen.cli create-incident "$@"

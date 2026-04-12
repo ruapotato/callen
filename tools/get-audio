@@ -1,0 +1,6 @@
+#!/bin/bash
+# Download or locate a call recording (prints path or copies to --out)
+# Usage: ./tools/get-audio --incident INC-0001 --channel caller --out /tmp/call.wav
+#        ./tools/get-audio --incident INC-0001 --channel tech
+#        ./tools/get-audio --incident INC-0001 --channel voicemail
+exec python3 -m callen.cli get-audio "$@"

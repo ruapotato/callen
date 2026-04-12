@@ -1,0 +1,4 @@
+#!/bin/bash
+# Fetch a full incident with contact, calls, transcript, and timeline
+# Usage: ./tools/get-incident INC-0001 [--pretty]
+exec python3 -m callen.cli get-incident "$@"
