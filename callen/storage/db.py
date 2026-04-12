@@ -784,3 +784,40 @@ class Database:
             (in_reply_to,),
         ).fetchone()
         return row["incident_id"] if row else None
+
+    def list_pending_emails(self, limit: int = 100) -> list[dict]:
+        """Inbound emails that have not been routed to an incident yet."""
+        rows = self._conn().execute(
+            """SELECT id, message_id, from_addr, to_addr, subject,
+                      substr(body_text, 1, 200) AS preview,
+                      received_at, in_reply_to
+               FROM emails
+               WHERE direction = 'in' AND incident_id IS NULL
+               ORDER BY received_at DESC
+               LIMIT ?""",
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def list_emails_for_incident(self, incident_id: str) -> list[dict]:
+        rows = self._conn().execute(
+            """SELECT * FROM emails WHERE incident_id = ?
+               ORDER BY received_at ASC""",
+            (incident_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def attach_email_to_incident(self, email_id: int, incident_id: str) -> bool:
+        conn = self._conn()
+        cur = conn.execute(
+            "UPDATE emails SET incident_id = ? WHERE id = ? AND incident_id IS NULL",
+            (incident_id, email_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+    def delete_email(self, email_id: int) -> bool:
+        conn = self._conn()
+        cur = conn.execute("DELETE FROM emails WHERE id = ?", (email_id,))
+        conn.commit()
+        return cur.rowcount > 0

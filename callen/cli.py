@@ -16,10 +16,13 @@ Every command returns exit 0 on success, 1 on not-found/invalid-arg,
 
 import argparse
 import json
+import logging
 import shutil
 import sys
 import time
 from pathlib import Path
+
+log = logging.getLogger("callen.cli")
 
 from callen.config import load_config
 from callen.storage.db import Database, normalize_phone
@@ -533,6 +536,215 @@ def cmd_search(args):
         _out(results)
 
 
+# --- Emails (triage queue + agent-sent replies) ---
+
+
+def cmd_list_pending_emails(args):
+    db = _db(args)
+    rows = db.list_pending_emails(limit=args.limit)
+    if args.pretty:
+        if not rows:
+            print("(no pending emails)")
+            return
+        for r in rows:
+            when = time.strftime('%Y-%m-%d %H:%M', time.localtime(r['received_at']))
+            subj = r['subject'][:60] if r['subject'] else '(no subject)'
+            print(f"  {r['id']:4d}  {when}  {r['from_addr']:<30s}  {subj}")
+        return
+    _out(rows)
+
+
+def cmd_get_email(args):
+    db = _db(args)
+    em = db.get_email(args.email_id)
+    if not em:
+        _err(f"email not found: {args.email_id}")
+    _out(em, pretty=args.pretty)
+
+
+def cmd_assign_email(args):
+    """Route a pending email to an incident (existing or new).
+
+    If --incident is given, attach to that incident.
+    If --create-incident is given, create a new incident from the email's
+    sender and subject, optionally overriding --subject / --priority.
+    """
+    db = _db(args)
+    em = db.get_email(args.email_id)
+    if not em:
+        _err(f"email not found: {args.email_id}")
+    if em.get("incident_id"):
+        _err(f"email already attached to {em['incident_id']}")
+
+    incident_id = args.incident
+    if args.create_incident:
+        # Look up contact by the email's sender address
+        from_addr = (em["from_addr"] or "").strip().lower()
+        if not from_addr:
+            _err("email has no from address")
+        contact_id = db.upsert_contact_by_email(from_addr)
+        subject = args.subject or em.get("subject") or f"Email from {from_addr}"
+        incident_id = db.create_incident(
+            contact_id=contact_id,
+            subject=subject,
+            channel="email",
+            status=args.status or "open",
+            priority=args.priority or "normal",
+        )
+        log.info("Created %s from email %s", incident_id, args.email_id)
+
+    if not incident_id:
+        _err("must pass --incident or --create-incident")
+
+    # Validate incident exists
+    if not db.get_incident(incident_id):
+        _err(f"incident not found: {incident_id}")
+
+    if not db.attach_email_to_incident(args.email_id, incident_id):
+        _err("failed to attach email to incident")
+
+    # Log on the timeline
+    db.add_incident_entry(
+        incident_id, "email",
+        author=em.get("from_addr") or "unknown",
+        linked_email_id=args.email_id,
+        payload={
+            "direction": "in",
+            "from": em.get("from_addr"),
+            "subject": em.get("subject"),
+            "preview": (em.get("body_text") or "")[:300],
+            "routed_by": "agent",
+        },
+    )
+
+    _out({
+        "email_id": args.email_id,
+        "incident_id": incident_id,
+        "status": "attached",
+    }, pretty=args.pretty)
+
+
+def cmd_reject_email(args):
+    """Discard a pending email — e.g. marketing, spam, not a support request.
+
+    By default the email row is deleted. Use --keep to just mark it rejected
+    without deleting (not yet implemented — deletes for now).
+    """
+    db = _db(args)
+    em = db.get_email(args.email_id)
+    if not em:
+        _err(f"email not found: {args.email_id}")
+    if em.get("incident_id"):
+        _err(f"email is already attached to {em['incident_id']} — cannot reject")
+
+    ok = db.delete_email(args.email_id)
+    if not ok:
+        _err("failed to delete email")
+    _out({
+        "email_id": args.email_id,
+        "status": "rejected",
+        "reason": args.reason or "",
+    })
+
+
+def cmd_send_email(args):
+    """Send an outbound email on an incident.
+
+    The email is threaded as a reply to the most recent inbound message on
+    the incident (if any). Stored in the emails table with direction=out and
+    logged on the incident timeline.
+    """
+    db = _db(args)
+    inc = db.get_incident(args.incident_id)
+    if not inc:
+        _err(f"incident not found: {args.incident_id}")
+
+    # Resolve destination from the contact if not given
+    to = args.to
+    if not to:
+        if not inc.get("contact_id"):
+            _err("incident has no contact and no --to given")
+        contact = db.get_contact(inc["contact_id"])
+        if not contact or not contact.get("emails"):
+            _err("contact has no email address on file")
+        to = contact["emails"][0]["address"]
+
+    # Find the most recent inbound email on this incident to thread against
+    existing = db.list_emails_for_incident(args.incident_id)
+    in_reply_to = None
+    references = None
+    for e in reversed(existing):
+        if e.get("direction") == "in" and e.get("message_id"):
+            in_reply_to = e["message_id"]
+            references = e.get("in_reply_to") or in_reply_to
+            break
+
+    body = args.body
+    if body == "-":
+        body = sys.stdin.read()
+    if not body:
+        _err("empty body")
+
+    # Subject — use incident's subject prefixed with Re: + [INC-NNNN]
+    subject = args.subject or inc.get("subject", "") or "Support"
+    if not subject.lower().startswith("re:"):
+        subject = f"Re: {subject}"
+    if args.incident_id not in subject:
+        subject = f"{subject} [{args.incident_id}]"
+
+    config = load_config(args.config)
+    if not config.email.enabled:
+        _err("email is not enabled in config.toml")
+
+    from callen.notify.email import send_mail
+    from callen.storage.models import EmailMessage as EmailRec
+
+    try:
+        msg_id = send_mail(
+            config.email,
+            to=to,
+            subject=subject,
+            body_text=body,
+            in_reply_to=in_reply_to,
+            references=references,
+        )
+    except Exception as e:
+        _err(f"send failed: {e}", code=2)
+
+    record = EmailRec(
+        message_id=msg_id,
+        incident_id=args.incident_id,
+        direction="out",
+        from_addr=config.email.from_address,
+        to_addr=to,
+        subject=subject,
+        body_text=body,
+        received_at=time.time(),
+        in_reply_to=in_reply_to or "",
+    )
+    email_id = db.save_email(record)
+
+    db.add_incident_entry(
+        args.incident_id, "email",
+        author=args.author or "agent",
+        linked_email_id=email_id,
+        payload={
+            "direction": "out",
+            "to": to,
+            "subject": subject,
+            "preview": body[:300],
+        },
+    )
+
+    _out({
+        "email_id": email_id,
+        "message_id": msg_id,
+        "to": to,
+        "subject": subject,
+        "status": "sent",
+    }, pretty=args.pretty)
+
+
 # --- Outbound call (hits the running Callen's REST endpoint) ---
 
 
@@ -736,6 +948,38 @@ def build_parser() -> argparse.ArgumentParser:
     pp = sub.add_parser("search", help="Fuzzy search contacts and incidents")
     pp.add_argument("query", help="partial name, phone digits, email, or subject")
     pp.set_defaults(func=cmd_search)
+
+    # emails — triage queue + outbound
+    pp = sub.add_parser("list-pending-emails", help="Inbound emails not yet routed to an incident")
+    pp.add_argument("--limit", type=int, default=100)
+    pp.set_defaults(func=cmd_list_pending_emails)
+
+    pp = sub.add_parser("get-email", help="Fetch one email (inbound or outbound)")
+    pp.add_argument("email_id", type=int)
+    pp.set_defaults(func=cmd_get_email)
+
+    pp = sub.add_parser("assign-email", help="Route a pending email to an incident")
+    pp.add_argument("email_id", type=int)
+    g = pp.add_mutually_exclusive_group(required=True)
+    g.add_argument("--incident", help="attach to an existing incident")
+    g.add_argument("--create-incident", action="store_true", help="create a new incident from the email")
+    pp.add_argument("--subject", help="override subject when creating a new incident")
+    pp.add_argument("--priority", choices=["low", "normal", "high", "urgent"])
+    pp.add_argument("--status", choices=["open", "in_progress", "waiting", "resolved", "closed"])
+    pp.set_defaults(func=cmd_assign_email)
+
+    pp = sub.add_parser("reject-email", help="Delete a pending email (marketing, spam, off-topic)")
+    pp.add_argument("email_id", type=int)
+    pp.add_argument("--reason", help="why it was rejected (for logs only)")
+    pp.set_defaults(func=cmd_reject_email)
+
+    pp = sub.add_parser("send-email", help="Send an outbound email on an incident")
+    pp.add_argument("incident_id")
+    pp.add_argument("--to", help="override recipient (defaults to contact's first email)")
+    pp.add_argument("--subject", help="override subject (defaults to incident subject with Re: prefix)")
+    pp.add_argument("--body", required=True, help="message body (or - to read from stdin)")
+    pp.add_argument("--author", default="agent")
+    pp.set_defaults(func=cmd_send_email)
 
     # originate
     pp = sub.add_parser(

@@ -61,13 +61,25 @@ class WebConfig:
 @dataclass
 class EmailConfig:
     enabled: bool = False
+    # --- Outbound SMTP (voicemail notify, auto-replies, agent replies) ---
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_user: str = ""
     smtp_password: str = ""
     smtp_tls: bool = True
-    from_address: str = ""
-    to_address: str = ""
+    from_address: str = ""        # the From we send as (usually == smtp_user)
+    to_address: str = ""           # operator's personal address (voicemail notify)
+    # --- Inbound IMAP (poll hello@ for new support requests) ---
+    imap_enabled: bool = False
+    imap_host: str = ""
+    imap_port: int = 993
+    imap_ssl: bool = True
+    imap_user: str = ""            # defaults to smtp_user if empty
+    imap_password: str = ""        # defaults to smtp_password if empty
+    imap_mailbox: str = "INBOX"
+    imap_poll_seconds: int = 30
+    hello_address: str = ""        # the address we monitor (e.g. hello@freesoftware.support)
+    auto_reply_consent: bool = True  # send consent request on first contact from new address
 
 
 @dataclass

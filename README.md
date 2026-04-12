@@ -214,6 +214,19 @@ echo "longer note" | ./tools/note-incident INC-0042 -
 # cell directly.
 ./tools/originate INC-0042
 ./tools/originate INC-0042 --destination 15551234567 --display-name "Jane"
+
+# Email triage queue — IMAP poller drops inbound mail here. Deterministic
+# threading (In-Reply-To, [INC-NNNN] in subject) auto-routes replies to
+# the right incident. New threads go to the pending queue for agent review
+# so marketing mail never creates tickets.
+./tools/list-pending-emails
+./tools/get-email 42
+./tools/assign-email 42 --incident INC-0018          # thread to existing
+./tools/assign-email 42 --create-incident --priority high \
+                       --subject "Wifi drops"         # create from email
+./tools/reject-email 42 --reason "newsletter"        # drop marketing
+./tools/send-email INC-0018 --body "We'll look into it"
+echo "Long reply body" | ./tools/send-email INC-0018 --body -
 ```
 
 **Typical agent flow** (heartbeat during an active call):

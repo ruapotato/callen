@@ -203,6 +203,16 @@ def main(config_path: str = "config.toml"):
     # Register account on the SIP thread (all pjlib calls must happen there)
     cmd_queue.submit(sip_account.register).result(timeout=10)
 
+    # IMAP poller for hello@ inbound mail
+    imap_poller = None
+    if config.email.imap_enabled:
+        try:
+            from callen.notify.imap_poller import IMAPPoller
+            imap_poller = IMAPPoller(config.email, db, event_bus)
+            imap_poller.start()
+        except Exception:
+            log.exception("Failed to start IMAP poller")
+
     # Start web server in its own thread with its own asyncio loop
     web_loop = asyncio.new_event_loop()
     web_app = create_app(config.web, call_registry, operator_state, event_bus, db)

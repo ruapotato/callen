@@ -35,13 +35,28 @@ port = 8080
 
 [email]
 enabled = true
+
+# --- Outbound SMTP (voicemail notify, auto-replies, agent replies) ---
 smtp_host = "smtp.example.com"
 smtp_port = 587
-smtp_user = "voicemail@freesoftware.support"
+smtp_user = "hello@freesoftware.support"
 smtp_password = "YOUR_SMTP_PASSWORD_HERE"
 smtp_tls = true
-from_address = "voicemail@freesoftware.support"
-to_address = "david@freesoftware.support"
+from_address = "hello@freesoftware.support"
+to_address = "david@freesoftware.support"   # where voicemail notifications go
+
+# --- Inbound IMAP (poll hello@ for new support requests) ---
+imap_enabled = true
+imap_host = "imap.example.com"
+imap_port = 993
+imap_ssl = true
+# imap_user / imap_password default to the SMTP credentials above if blank
+imap_user = ""
+imap_password = ""
+imap_mailbox = "INBOX"
+imap_poll_seconds = 30
+hello_address = "hello@freesoftware.support"  # the monitored mailbox address
+auto_reply_consent = true  # send a consent request on first contact from a new sender
 
 [general]
 db_path = "./callen.db"
