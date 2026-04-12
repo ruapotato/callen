@@ -217,7 +217,7 @@ def main(config_path: str = "config.toml"):
 
     # Start web server in its own thread with its own asyncio loop
     web_loop = asyncio.new_event_loop()
-    agent_runner = AgentRunner()
+    agent_runner = AgentRunner(db=db)
     web_app = create_app(
         config.web, call_registry, operator_state, event_bus, db,
         agent_runner=agent_runner,

@@ -133,6 +133,28 @@ function switchTab(name) {
         t.classList.toggle('active', t.dataset.tab === name);
     });
     loadQueue();
+
+    // Show a "+ New contact" shortcut in the detail-actions area
+    // whenever the Contacts tab is active and nothing's selected.
+    if (name === 'contacts' && state.selectedKind !== 'contact') {
+        const actions = $('detail-actions');
+        clear(actions);
+        actions.appendChild(el('button', {
+            class: 'primary',
+            onclick: () => newContactPrompt(),
+        }, '＋ New contact'));
+
+        const header = $('detail-header');
+        clear(header);
+        header.appendChild(el('div', { class: 'detail-title' }, 'Contacts'));
+        header.appendChild(el('div', { class: 'detail-meta' },
+            el('span', {}, 'Select a contact or create one with + New contact.')));
+
+        $('detail-body').innerHTML =
+            '<div class="empty-state">Pick a contact from the left, or create one.</div>';
+        $('context-section').innerHTML =
+            '<div class="empty-state">Contact details will show here.</div>';
+    }
 }
 
 async function loadQueue() {
@@ -177,19 +199,31 @@ function renderQueueItems(list, items, builder, emptyMsg) {
     for (const item of items) list.appendChild(builder(item));
 }
 
+function contactLabelFor(inc) {
+    // Prefer display name; fall back to phone, then email, then "unknown".
+    const name = (inc.contact_name || '').trim();
+    if (name) return name;
+    if (inc.contact_phone) return inc.contact_phone;
+    if (inc.contact_email) return inc.contact_email;
+    return 'unknown';
+}
+
 function renderIncidentsQueue(items) {
     const list = $('queue-list');
     renderQueueItems(list, items, (inc) => {
         const selected = state.selectedKind === 'incident' && state.selectedId === inc.id;
+        const contactLabel = contactLabelFor(inc);
+        const subject = inc.subject || '(no subject)';
         const node = el('div', {
             class: 'queue-item' + (selected ? ' selected' : ''),
             onclick: () => selectIncident(inc.id),
         }, [
-            el('div', { class: 'q-title' }, inc.subject || '(no subject)'),
+            el('div', { class: 'q-contact' }, contactLabel),
+            el('div', { class: 'q-issue' }, subject),
             el('div', { class: 'q-meta' }, [
                 el('span', { class: 'q-id' }, inc.id),
                 el('span', { class: `status-pill ${inc.status}` }, inc.status),
-                el('span', {}, fmtTime(inc.updated_at)),
+                el('span', { class: 'q-time' }, fmtTime(inc.updated_at)),
             ]),
         ]);
         return node;
@@ -553,15 +587,39 @@ async function selectContact(contactId) {
             el('span', {}, c.display_name || '(unnamed)'),
             el('span', { class: 'detail-id' }, c.id),
         ]));
+        const phones = c.phones || [];
+        const emails = c.emails || [];
         header.appendChild(el('div', { class: 'detail-meta' }, [
             el('span', {}, `${(c.incidents || []).length} tickets`),
+            phones.length ? el('span', {}, `${phones.length} phone${phones.length === 1 ? '' : 's'}`) : null,
+            emails.length ? el('span', {}, `${emails.length} email${emails.length === 1 ? '' : 's'}`) : null,
         ]));
 
-        $('detail-actions').innerHTML = '';
+        // Action buttons for this contact
+        const actions = $('detail-actions');
+        clear(actions);
+        actions.appendChild(el('button', {
+            class: 'primary',
+            onclick: () => newContactPrompt(),
+        }, '＋ New contact'));
+        if (phones.length) {
+            // One call button per phone number
+            for (const p of phones) {
+                actions.appendChild(el('button', {
+                    onclick: () => originateFromContact(c, p.e164),
+                }, `📞 Call ${p.e164}`));
+            }
+        }
+        actions.appendChild(el('button', {
+            onclick: () => editContactNamePrompt(c),
+        }, '✎ Rename'));
 
         const body = $('detail-body');
         clear(body);
         const list = el('div', { class: 'timeline' });
+        if ((c.incidents || []).length === 0) {
+            list.appendChild(el('div', { class: 'empty-state' }, 'No tickets for this contact yet.'));
+        }
         for (const inc of c.incidents || []) {
             list.appendChild(el('div', {
                 class: 'ctx-incident-item',
@@ -575,6 +633,76 @@ async function selectContact(contactId) {
 
         renderContactContext(c, null);
     } catch (e) { console.error(e); }
+}
+
+async function originateFromContact(contact, phone) {
+    if (!confirm(
+        `Call ${contact.display_name || contact.id} at ${phone}?\n\n` +
+        `Your cell will ring first. Press 1 to confirm, then Callen will ` +
+        `dial the contact and bridge the call.`
+    )) return;
+    try {
+        const resp = await api('/call/originate', {
+            method: 'POST',
+            body: JSON.stringify({
+                contact_id: contact.id,
+                destination: phone,
+                display_name: contact.display_name || '',
+            }),
+        });
+        alert(`Callback initiated.\nIncident: ${resp.incident_id}\nYour cell should ring shortly.`);
+        // Jump to the new incident
+        if (resp.incident_id) {
+            selectIncident(resp.incident_id);
+        }
+    } catch (e) {
+        alert(`Failed: ${e.message}`);
+    }
+}
+
+async function newContactPrompt() {
+    const name = prompt('Contact display name:', '');
+    if (name == null) return;
+    const phone = prompt('Phone number (e.g. 15551234567 or leave blank):', '');
+    if (phone == null) return;
+    const email = prompt('Email address (or leave blank):', '');
+    if (email == null) return;
+    if (!phone.trim() && !email.trim()) {
+        alert('Need at least a phone or email.');
+        return;
+    }
+    try {
+        const c = await api('/contacts', {
+            method: 'POST',
+            body: JSON.stringify({
+                name: name.trim(),
+                phone: phone.trim(),
+                email: email.trim(),
+            }),
+        });
+        // Refresh the queue and jump to the new contact
+        state.currentTab = 'contacts';
+        document.querySelectorAll('.queue-tabs .tab').forEach((t) => {
+            t.classList.toggle('active', t.dataset.tab === 'contacts');
+        });
+        await loadQueue();
+        selectContact(c.id);
+    } catch (e) {
+        alert(`Failed: ${e.message}`);
+    }
+}
+
+async function editContactNamePrompt(contact) {
+    const name = prompt('New display name:', contact.display_name || '');
+    if (name == null) return;
+    try {
+        // No direct REST endpoint for update — use the agent with a short prompt
+        // (falls back to CLI). Simpler: delegate to the agent.
+        sendAgentPrompt(
+            `Rename contact ${contact.id} to "${name.trim()}" using ./tools/update-contact ${contact.id} --name "${name.trim()}".`,
+            { contact_id: contact.id },
+        );
+    } catch (e) { alert(`Failed: ${e.message}`); }
 }
 
 // ============ Context panel for contact ============

@@ -195,6 +195,49 @@ async def contact_detail(contact_id):
     return jsonify(c)
 
 
+@bp.route("/api/contacts", methods=["POST"])
+async def create_contact():
+    """Create a new contact.
+
+    Body: {name: str, phone?: str, email?: str, notes?: str}
+    Returns the created contact (or the existing one if phone/email matched).
+    """
+    data = await request.get_json() or {}
+    name = (data.get("name") or "").strip()
+    phone = (data.get("phone") or "").strip()
+    email = (data.get("email") or "").strip()
+    notes = (data.get("notes") or "").strip()
+
+    if not phone and not email:
+        return jsonify({"error": "phone or email required"}), 400
+
+    db = _db()
+    contact_id = None
+
+    if phone:
+        contact_id, _ = db.upsert_contact_by_phone(phone, display_name=name)
+    if email:
+        if contact_id:
+            # Attach email to existing contact
+            conn = db._conn()
+            conn.execute(
+                "INSERT OR IGNORE INTO contact_emails (contact_id, address, created_at) VALUES (?, ?, unixepoch('subsec'))",
+                (contact_id, email.lower()),
+            )
+            conn.commit()
+        else:
+            contact_id = db.upsert_contact_by_email(email, display_name=name)
+
+    if name or notes:
+        db.update_contact(
+            contact_id,
+            display_name=name or None,
+            notes=notes or None,
+        )
+
+    return jsonify(db.get_contact(contact_id)), 201
+
+
 # --- Email queues ---
 
 
@@ -218,8 +261,14 @@ async def get_email(email_id):
 async def originate_call():
     """Kick off a technician-first outbound call.
 
-    POST body: {"incident_id": "INC-0042", "destination": "15551234567",
-                "display_name": "Jane Doe"}
+    POST body:
+      {"incident_id": "INC-0042", "destination": "15551234567",
+       "display_name": "Jane Doe"}
+    OR, to cold-call a contact without an existing ticket:
+      {"contact_id": "CON-0007"}
+      — destination defaults to the contact's first phone, and a fresh
+        incident is auto-created and linked.
+
     The operator's cell rings first; after DTMF 1 confirmation, the contact
     is dialed and the two legs are bridged.
     """
@@ -227,15 +276,43 @@ async def originate_call():
     if not data:
         return jsonify({"error": "missing body"}), 400
 
+    db = _db()
     incident_id = data.get("incident_id")
     destination = data.get("destination")
-    if not incident_id or not destination:
-        return jsonify({"error": "incident_id and destination required"}), 400
+    display_name = data.get("display_name") or ""
+    contact_id = data.get("contact_id")
 
-    display_name = data.get("display_name", "")
+    # If only a contact_id was given, resolve the destination from their
+    # first phone and auto-create an incident on that contact.
+    if contact_id and not incident_id:
+        contact = db.get_contact(contact_id)
+        if not contact:
+            return jsonify({"error": "contact not found"}), 404
+        if not destination:
+            phones = contact.get("phones") or []
+            if not phones:
+                return jsonify({"error": "contact has no phone on file"}), 400
+            destination = phones[0]["e164"]
+        if not display_name:
+            display_name = contact.get("display_name") or ""
+
+        # Create a fresh incident attached to this contact
+        incident_id = db.create_incident(
+            contact_id=contact_id,
+            subject=f"Outbound call to {display_name or destination}",
+            channel="phone",
+            status="open",
+        )
+        db.add_incident_entry(
+            incident_id, "note", author="operator",
+            payload={"text": f"Outbound call initiated from dashboard to {destination}"},
+        )
+
+    if not incident_id or not destination:
+        return jsonify({"error": "incident_id/contact_id and destination required"}), 400
 
     # Validate the incident exists
-    inc = _db().get_incident(incident_id)
+    inc = db.get_incident(incident_id)
     if not inc:
         return jsonify({"error": "incident not found"}), 404
 
@@ -245,6 +322,7 @@ async def originate_call():
         "status": "initiated",
         "incident_id": incident_id,
         "destination": destination,
+        "display_name": display_name,
     })
 
 

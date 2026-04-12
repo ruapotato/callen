@@ -534,18 +534,32 @@ class Database:
         limit: int = 100, offset: int = 0,
     ) -> list[dict]:
         conn = self._conn()
-        where = []
+        where = ["1=1"]
         args: list = []
         if status:
-            where.append("status = ?")
+            where.append("i.status = ?")
             args.append(status)
         if contact_id:
-            where.append("contact_id = ?")
+            where.append("i.contact_id = ?")
             args.append(contact_id)
-        wclause = ("WHERE " + " AND ".join(where)) if where else ""
+        wclause = "WHERE " + " AND ".join(where)
         args.extend([limit, offset])
+        # Left-join contact display name and first phone/email so the UI
+        # can show "Name" / "Issue" / "meta" rows without a follow-up fetch.
         rows = conn.execute(
-            f"SELECT * FROM incidents {wclause} ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+            f"""SELECT i.*,
+                       c.display_name AS contact_name,
+                       (SELECT e164 FROM contact_phones
+                          WHERE contact_id = i.contact_id
+                          ORDER BY id LIMIT 1) AS contact_phone,
+                       (SELECT address FROM contact_emails
+                          WHERE contact_id = i.contact_id
+                          ORDER BY id LIMIT 1) AS contact_email
+                FROM incidents i
+                LEFT JOIN contacts c ON c.id = i.contact_id
+                {wclause}
+                ORDER BY i.updated_at DESC
+                LIMIT ? OFFSET ?""",
             args,
         ).fetchall()
         result = []

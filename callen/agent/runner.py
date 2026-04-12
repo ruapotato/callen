@@ -61,7 +61,8 @@ class AgentRunner:
     same session. Call reset_conversation() to start fresh.
     """
 
-    def __init__(self, max_runs: int = 50, claude_bin: str | None = None):
+    def __init__(self, max_runs: int = 50, claude_bin: str | None = None,
+                 db=None):
         self._runs: dict[str, AgentRun] = {}
         self._order: list[str] = []
         self._max_runs = max_runs
@@ -70,6 +71,11 @@ class AgentRunner:
         self._lock = asyncio.Lock()
         self._continue_next = False
         self._conversation_turn = 0
+        # Optional DB handle — used to inject a snapshot of the currently
+        # focused item (incident/contact/email) into the prompt preamble
+        # so the agent doesn't have to make a tool call just to see what
+        # the operator is looking at.
+        self._db = db
 
     def system_prompt(self) -> str:
         try:
@@ -79,17 +85,114 @@ class AgentRunner:
             return ""
 
     def _build_user_prompt(self, prompt: str, context: dict) -> str:
-        """Prepend a short context hint so the agent knows the UI state."""
+        """Prepend a context hint + a snapshot of the focused item so the
+        agent can answer simple questions without a tool round-trip."""
         if not context:
             return prompt
+
         parts = ["[Callen dashboard context]"]
-        for key in ("incident_id", "contact_id", "call_id", "view"):
+        for key in ("incident_id", "contact_id", "call_id", "email_id", "view"):
             val = context.get(key)
             if val:
                 parts.append(f"- {key}: {val}")
+
+        # If we have a DB handle, pull a small snapshot of whatever the
+        # operator is currently looking at.
+        snapshot = self._focus_snapshot(context)
+        if snapshot:
+            parts.append("")
+            parts.append("[currently on screen]")
+            parts.append(snapshot)
+
         parts.append("")
         parts.append(prompt)
         return "\n".join(parts)
+
+    def _focus_snapshot(self, context: dict) -> str:
+        """Return a short human-readable description of the item the
+        operator currently has focused. Empty string if nothing useful."""
+        if self._db is None:
+            return ""
+
+        try:
+            incident_id = context.get("incident_id")
+            if incident_id:
+                inc = self._db.get_incident(incident_id)
+                if not inc:
+                    return ""
+                lines = [
+                    f"Incident: {inc['id']}",
+                    f"Subject: {inc.get('subject') or '(none)'}",
+                    f"Status: {inc.get('status')}  Priority: {inc.get('priority')}",
+                ]
+                labels = inc.get("labels") or []
+                if labels:
+                    lines.append(f"Labels: {', '.join(labels)}")
+
+                if inc.get("contact_id"):
+                    contact = self._db.get_contact(inc["contact_id"])
+                    if contact:
+                        name = contact.get("display_name") or "(unnamed)"
+                        phones = ", ".join(p["e164"] for p in contact.get("phones") or [])
+                        emails = ", ".join(e["address"] for e in contact.get("emails") or [])
+                        lines.append(f"Contact: {name} ({contact['id']})")
+                        if phones:
+                            lines.append(f"  phones: {phones}")
+                        if emails:
+                            lines.append(f"  emails: {emails}")
+
+                # Most recent few timeline entries
+                entries = self._db.list_incident_entries(incident_id)
+                if entries:
+                    lines.append("Recent timeline:")
+                    for e in entries[-5:]:
+                        t = e.get("type", "?")
+                        payload = e.get("payload") or {}
+                        if t == "note":
+                            text = (payload.get("text") or "").strip()[:140]
+                            lines.append(f"  - note: {text}")
+                        elif t == "call":
+                            direction = payload.get("direction", "inbound")
+                            lines.append(f"  - {direction} call")
+                        elif t == "email":
+                            lines.append(f"  - email from {payload.get('from','?')}: {payload.get('subject','')[:80]}")
+                        else:
+                            lines.append(f"  - {t}")
+
+                return "\n".join(lines)
+
+            contact_id = context.get("contact_id")
+            if contact_id:
+                contact = self._db.get_contact(contact_id)
+                if not contact:
+                    return ""
+                name = contact.get("display_name") or "(unnamed)"
+                phones = ", ".join(p["e164"] for p in contact.get("phones") or [])
+                emails = ", ".join(e["address"] for e in contact.get("emails") or [])
+                lines = [f"Contact: {name} ({contact['id']})"]
+                if phones:
+                    lines.append(f"phones: {phones}")
+                if emails:
+                    lines.append(f"emails: {emails}")
+                return "\n".join(lines)
+
+            email_id = context.get("email_id")
+            if email_id:
+                em = self._db.get_email(email_id)
+                if not em:
+                    return ""
+                body = (em.get("body_text") or "").strip()[:400]
+                return (
+                    f"Email #{em['id']} [{em.get('status')}]\n"
+                    f"From: {em.get('from_addr')}\n"
+                    f"Subject: {em.get('subject')}\n"
+                    f"Preview: {body}"
+                )
+        except Exception:
+            log.exception("Failed to build focus snapshot")
+            return ""
+
+        return ""
 
     async def start(
         self,
