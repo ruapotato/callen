@@ -533,11 +533,57 @@ def cmd_search(args):
         _out(results)
 
 
-# --- Outbound call (stub, wired in Phase 9) ---
+# --- Outbound call (hits the running Callen's REST endpoint) ---
 
 
 def cmd_originate(args):
-    _err("call originate is wired in Phase 9 — not yet available", code=2)
+    """Originate an outbound call via the running Callen's REST API.
+
+    The CLI process has no SIP stack, so it delegates to the running
+    Callen instance via HTTP. Callen must be running with the web server
+    enabled (which is the default).
+    """
+    import urllib.request
+    import urllib.error
+
+    db = _db(args)
+    inc = db.get_incident(args.incident_id)
+    if not inc:
+        _err(f"incident not found: {args.incident_id}")
+
+    # Resolve destination phone from the contact unless explicitly given
+    destination = args.destination
+    display_name = args.display_name or ""
+    if not destination:
+        if not inc.get("contact_id"):
+            _err("incident has no contact and no --destination given")
+        contact = db.get_contact(inc["contact_id"])
+        if not contact or not contact.get("phones"):
+            _err("contact has no phone number on file")
+        destination = contact["phones"][0]["e164"]
+        display_name = display_name or contact.get("display_name") or ""
+
+    # Load web config for the endpoint URL
+    config = load_config(args.config)
+    host = config.web.host if config.web.host != "0.0.0.0" else "127.0.0.1"
+    url = f"http://{host}:{config.web.port}/api/call/originate"
+
+    body = json.dumps({
+        "incident_id": args.incident_id,
+        "destination": destination,
+        "display_name": display_name,
+    }).encode()
+
+    req = urllib.request.Request(
+        url, data=body, headers={"Content-Type": "application/json"}, method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = json.loads(resp.read().decode())
+    except urllib.error.URLError as e:
+        _err(f"could not reach running Callen at {url}: {e}", code=2)
+
+    _out(result, pretty=args.pretty)
 
 
 # --- Argument parsing ---
@@ -692,8 +738,19 @@ def build_parser() -> argparse.ArgumentParser:
     pp.set_defaults(func=cmd_search)
 
     # originate
-    pp = sub.add_parser("originate", help="Originate an outbound call (Phase 9)")
-    pp.add_argument("incident_id")
+    pp = sub.add_parser(
+        "originate",
+        help="Originate an outbound call: rings operator first, then bridges to contact",
+    )
+    pp.add_argument("incident_id", help="incident to attach the outbound call to")
+    pp.add_argument(
+        "--destination",
+        help="destination phone (defaults to the contact's first phone on file)",
+    )
+    pp.add_argument(
+        "--display-name", dest="display_name",
+        help="name to announce to the operator (defaults to contact name)",
+    )
     pp.set_defaults(func=cmd_originate)
 
     return p

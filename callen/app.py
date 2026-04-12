@@ -19,7 +19,7 @@ from callen.sip.account import CallenAccount
 from callen.sip.call import CallenCall, CallState
 from callen.sip.media import check_audio_tools
 from callen.ivr.engine import IVREngine
-from callen.ivr import api
+from callen.ivr import api, outbound
 from callen.state.events import EventBus
 from callen.state.operator import OperatorState
 from callen.state.calls import CallRegistry
@@ -186,6 +186,17 @@ def main(config_path: str = "config.toml"):
             return None
 
     api._make_outbound_call = make_outbound_call
+
+    # Outbound module (technician-first bridging)
+    outbound.configure(
+        cmd_queue=cmd_queue,
+        config=config,
+        event_bus=event_bus,
+        operator_state=operator_state,
+        db=db,
+        sip_account=sip_account,
+        call_registry=call_registry,
+    )
 
     sip_endpoint.start()
     # Register account on the SIP thread (all pjlib calls must happen there)

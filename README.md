@@ -208,6 +208,12 @@ echo "longer note" | ./tools/note-incident INC-0042 -
 ./tools/search "jane"
 ./tools/search 5559990000
 ./tools/search "router"
+
+# Technician-first outbound call — Callen rings your cell first, you press 1,
+# then Callen dials the contact and bridges you. You never dial from your
+# cell directly.
+./tools/originate INC-0042
+./tools/originate INC-0042 --destination 15551234567 --display-name "Jane"
 ```
 
 **Typical agent flow** (heartbeat during an active call):

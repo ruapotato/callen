@@ -102,6 +102,40 @@ async def get_transcript(call_id):
     return jsonify(segments)
 
 
+@bp.route("/api/call/originate", methods=["POST"])
+async def originate_call():
+    """Kick off a technician-first outbound call.
+
+    POST body: {"incident_id": "INC-0042", "destination": "15551234567",
+                "display_name": "Jane Doe"}
+    The operator's cell rings first; after DTMF 1 confirmation, the contact
+    is dialed and the two legs are bridged.
+    """
+    data = await request.get_json()
+    if not data:
+        return jsonify({"error": "missing body"}), 400
+
+    incident_id = data.get("incident_id")
+    destination = data.get("destination")
+    if not incident_id or not destination:
+        return jsonify({"error": "incident_id and destination required"}), 400
+
+    display_name = data.get("display_name", "")
+
+    # Validate the incident exists
+    inc = _db().get_incident(incident_id)
+    if not inc:
+        return jsonify({"error": "incident not found"}), 404
+
+    from callen.ivr import outbound
+    outbound.originate(incident_id, destination, display_name)
+    return jsonify({
+        "status": "initiated",
+        "incident_id": incident_id,
+        "destination": destination,
+    })
+
+
 @bp.route("/api/recordings/<call_id>/<channel>")
 async def get_recording(call_id, channel):
     """Download a recording WAV. Channel is 'caller' or 'tech'."""
