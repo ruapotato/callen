@@ -87,6 +87,10 @@ class IVREngine:
         except Exception:
             log.exception("Failed to register IVR thread with pjlib")
 
+        # Reload the IVR script on every call so edits to IVR.py apply
+        # live without restarting Callen. The file is small, this is cheap.
+        self._load_script()
+
         # Wait for audio media to be established
         call.media_ready.wait(timeout=10)
         if call.state == CallState.DISCONNECTED:

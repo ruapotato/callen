@@ -21,13 +21,19 @@
 
 def IVR(call):
     # Recording consent — required before anything else.
-    # Returning callers who already agreed on a prior call skip this step.
+    # Returning callers who already agreed on a prior call skip the gate
+    # but are reminded that the call is still being recorded.
     if has_consented(call):
-        say(call, "Welcome back to free software dot support.", repeat=False)
+        say(call, (
+            "Welcome back to free software support. "
+            "This is a recorded call. "
+            "We have marked that you previously consented to being recorded. "
+            "If that is not true, please hang up now."
+        ), repeat=False)
         call.consented_to_recording = True
     else:
         say(call, (
-            "Welcome to free software dot support. "
+            "Welcome to free software support. "
             "This call is recorded and may be published as educational content. "
             "Press 1 to consent and continue, or hang up now."
         ))
