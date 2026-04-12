@@ -188,7 +188,13 @@ class TranscriptionStream:
             self._emit_utterance(utt_frames, utt_start_offset)
 
     def _emit_utterance(self, frames: list[bytes], offset: float):
-        """Resample and submit one utterance to Parakeet."""
+        """Resample and submit one utterance to Parakeet.
+
+        Applies an RMS energy gate before transcription — Parakeet
+        cheerfully hallucinates "okay", "yeah", "um" on near-silence
+        that barely tripped VAD, so we additionally require the
+        utterance to have real acoustic energy.
+        """
         pcm = b"".join(frames)
         try:
             samples_16k = self._resampler.process(pcm)
@@ -197,6 +203,16 @@ class TranscriptionStream:
             return
 
         if samples_16k.size == 0:
+            return
+
+        # Silence / low-energy gate. float32 PCM is in [-1, 1], so an
+        # RMS under ~0.005 is effectively silent speech. Also require a
+        # minimum peak so brief clicks/pops don't become "yeah".
+        rms = float(np.sqrt(np.mean(samples_16k * samples_16k)))
+        peak = float(np.max(np.abs(samples_16k)))
+        if rms < 0.005 or peak < 0.03:
+            log.debug("[%s @%.1fs] gated silence (rms=%.4f peak=%.4f)",
+                      self.label, offset, rms, peak)
             return
 
         try:
