@@ -60,6 +60,28 @@ async def list_agent_runs():
     return jsonify(runner.list_runs(limit=limit))
 
 
+@bp.route("/api/agent/reset", methods=["POST"])
+async def reset_agent_conversation():
+    """Start a fresh claude session on the next prompt."""
+    runner = _runner()
+    if runner is None:
+        return jsonify({"error": "agent runner not configured"}), 503
+    runner.reset_conversation()
+    return jsonify({"status": "reset", "turn": 0})
+
+
+@bp.route("/api/agent/state")
+async def agent_state():
+    """Return whether the agent is currently in a continuing conversation."""
+    runner = _runner()
+    if runner is None:
+        return jsonify({"continuing": False, "turn": 0})
+    return jsonify({
+        "continuing": runner._continue_next,
+        "turn": runner._conversation_turn,
+    })
+
+
 @bp.route("/api/agent/runs/<run_id>")
 async def get_agent_run(run_id):
     runner = _runner()

@@ -54,6 +54,11 @@ class AgentRunner:
     Keeps an in-memory log of recent runs so the UI can list them.
     WebSocket subscribers get live events; late subscribers can fetch
     a replay via get_run.
+
+    Conversation continuity: claude's `--continue` flag resumes the most
+    recent conversation in the current directory. After the first successful
+    run we set _continue_next so that every subsequent prompt appends to the
+    same session. Call reset_conversation() to start fresh.
     """
 
     def __init__(self, max_runs: int = 50, claude_bin: str | None = None):
@@ -63,6 +68,8 @@ class AgentRunner:
         self._claude_bin = claude_bin or shutil.which("claude") or "claude"
         self._subscribers: dict[str, set[asyncio.Queue]] = {}
         self._lock = asyncio.Lock()
+        self._continue_next = False
+        self._conversation_turn = 0
 
     def system_prompt(self) -> str:
         try:
@@ -84,9 +91,20 @@ class AgentRunner:
         parts.append(prompt)
         return "\n".join(parts)
 
-    async def start(self, prompt: str, context: dict | None = None) -> AgentRun:
+    async def start(
+        self,
+        prompt: str,
+        context: dict | None = None,
+        autonomous: bool = False,
+    ) -> AgentRun:
         """Launch a claude subprocess for this prompt. Returns immediately;
-        events stream in via the run's queue."""
+        events stream in via the run's queue.
+
+        If autonomous=True, this run is a system-triggered review (e.g. a
+        voicemail post-processor) and will NOT read or modify the operator's
+        interactive conversation state. It always starts a fresh session
+        and never arms continuation.
+        """
         run_id = uuid.uuid4().hex[:12]
         run = AgentRun(
             run_id=run_id,
@@ -98,6 +116,15 @@ class AgentRunner:
         async with self._lock:
             self._runs[run_id] = run
             self._order.append(run_id)
+            if autonomous:
+                # Autonomous runs never continue a conversation and never
+                # touch _continue_next so the operator's session is safe.
+                run.context = {**run.context, "_continues": False,
+                               "_turn": 0, "_autonomous": True}
+            else:
+                # Interactive operator run — follow the continuation state
+                run.context = {**run.context, "_continues": self._continue_next,
+                               "_turn": self._conversation_turn + 1}
             # Trim to max_runs
             while len(self._order) > self._max_runs:
                 old = self._order.pop(0)
@@ -106,6 +133,13 @@ class AgentRunner:
         # Spawn in a task so the caller can return the run_id immediately
         asyncio.create_task(self._execute(run))
         return run
+
+    def reset_conversation(self):
+        """Clear the conversation state — the next prompt starts a new
+        claude session instead of continuing the previous one."""
+        self._continue_next = False
+        self._conversation_turn = 0
+        log.info("Agent conversation reset")
 
     async def _execute(self, run: AgentRun):
         """Run the claude subprocess and pump events into the run + subscribers."""
@@ -133,6 +167,15 @@ class AgentRunner:
             "--verbose",
             "--allowedTools", *allowed_tools,
         ]
+
+        # Continue the previous conversation if we have one. claude's
+        # --continue picks up the most recent session in the working dir,
+        # so the system prompt is already in context and we don't need
+        # to resend it — but re-appending is harmless.
+        continues = run.context.get("_continues", False)
+        if continues:
+            cmd.append("--continue")
+
         if system_prompt:
             cmd.extend(["--append-system-prompt", system_prompt])
 
@@ -222,13 +265,22 @@ class AgentRunner:
             log.exception("Agent run %s crashed", run.run_id)
         finally:
             run.ended_at = time.time()
+            # Arm continuation for the next prompt only if this run was an
+            # interactive operator run AND it succeeded. Autonomous runs
+            # (e.g. voicemail reviews) never touch the operator's session.
+            if run.status == "done" and not run.context.get("_autonomous"):
+                self._continue_next = True
+                self._conversation_turn += 1
             await self._broadcast(run.run_id, {
                 "type": "complete",
                 "status": run.status,
                 "result": run.result_text,
                 "error": run.error,
+                "turn": self._conversation_turn,
+                "continues": self._continue_next,
             })
-            log.info("Agent run %s finished: %s", run.run_id, run.status)
+            log.info("Agent run %s finished: %s (turn=%d)",
+                     run.run_id, run.status, self._conversation_turn)
 
     async def subscribe(self, run_id: str) -> asyncio.Queue:
         """Get a queue that receives live events for a run.

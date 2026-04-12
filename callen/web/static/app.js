@@ -724,8 +724,11 @@ function collectContext() {
 async function sendAgentPrompt(text, context) {
     showAgentDrawer();
     setAgentStatus('running', 'Running…');
-    clearAgentBody();
-    appendAgentLine(`▸ ${text}`, 'assistant');
+
+    // Echo the user's prompt into the drawer as a styled block.
+    // We do NOT clear previous content — the drawer accumulates the
+    // conversation until the operator hits "New chat".
+    appendAgentPromptEcho(text);
 
     try {
         const resp = await api('/agent', {
@@ -739,6 +742,26 @@ async function sendAgentPrompt(text, context) {
         setAgentStatus('error', 'Error');
         appendAgentLine(`error: ${e.message}`, 'error');
     }
+}
+
+async function resetAgentConversation() {
+    try {
+        await api('/agent/reset', { method: 'POST' });
+    } catch (e) { /* still clear UI */ }
+    clearAgentBody();
+    $('agent-turn').textContent = 'Turn 1';
+    setAgentStatus('', 'Ready');
+}
+
+function appendAgentPromptEcho(text) {
+    const body = $('agent-drawer-body');
+    // Visual separator if this isn't the first prompt
+    if (body.childNodes.length > 0) {
+        body.appendChild(el('div', { class: 'agent-conversation-break' },
+            `— turn ${state.currentTurn || ''} —`.trim()));
+    }
+    body.appendChild(el('div', { class: 'agent-prompt-echo' }, text));
+    body.scrollTop = body.scrollHeight;
 }
 
 function connectAgentWs(runId) {
@@ -793,6 +816,10 @@ function handleAgentEvent(ev) {
         case 'complete':
             setAgentStatus(ev.status === 'done' ? 'done' : 'error',
                            ev.status === 'done' ? 'Done' : `Error: ${ev.error || ''}`);
+            if (ev.turn) {
+                state.currentTurn = ev.turn;
+                $('agent-turn').textContent = `Turn ${ev.turn}`;
+            }
             if (state.agentWs) state.agentWs.close();
             // Refresh everything — the agent may have changed state
             refreshCounts();
@@ -826,7 +853,8 @@ function appendAgentLine(text, kind) {
     body.scrollTop = body.scrollHeight;
 }
 
-$('agent-close').addEventListener('click', hideAgentDrawer);
+$('agent-minimize').addEventListener('click', hideAgentDrawer);
+$('agent-new').addEventListener('click', resetAgentConversation);
 
 // Keyboard shortcuts
 document.addEventListener('keydown', (e) => {
@@ -851,11 +879,22 @@ function connectCallsWs() {
     ws.onclose = () => setTimeout(connectCallsWs, 3000);
 }
 
+async function loadAgentState() {
+    try {
+        const d = await api('/agent/state');
+        state.currentTurn = d.turn || 0;
+        if (d.turn > 0) {
+            $('agent-turn').textContent = `Turn ${d.turn}`;
+        }
+    } catch (e) { /* agent disabled */ }
+}
+
 // ============ Init ============
 async function init() {
     loadOperatorStatus();
     await refreshCounts();
     await loadQueue();
+    await loadAgentState();
     connectCallsWs();
     setInterval(refreshCounts, 15000);
 }

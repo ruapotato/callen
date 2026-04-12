@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Callen — Support Console</title>
-    <link rel="stylesheet" href="/static/style.css?v=3">
+    <link rel="stylesheet" href="/static/style.css?v=4">
 </head>
 <body>
 
@@ -84,12 +84,14 @@
 <div class="agent-drawer hidden" id="agent-drawer">
     <div class="agent-drawer-header">
         <span class="agent-status" id="agent-status">Running…</span>
+        <span class="agent-turn" id="agent-turn" title="Conversation turn">Turn 1</span>
         <span class="agent-run-id" id="agent-run-id"></span>
-        <button class="agent-close" id="agent-close" title="Close (Esc)">×</button>
+        <button class="agent-btn" id="agent-new" title="Start a fresh claude conversation">New chat</button>
+        <button class="agent-btn" id="agent-minimize" title="Minimize (Esc)">−</button>
     </div>
     <div class="agent-drawer-body" id="agent-drawer-body"></div>
 </div>
 
-<script src="/static/app.js?v=3"></script>
+<script src="/static/app.js?v=4"></script>
 </body>
 </html>

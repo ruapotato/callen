@@ -43,6 +43,9 @@ class IVREngine:
         api._operator_state = operator_state
         api._event_bus = event_bus
         api._config = config
+        # Allow the IVR api to hand a DB reference to post-processing
+        # workers like the voicemail transcriber. We pull it from the
+        # storage layer the engine already has access to.
 
     def _load_script(self):
         script_path = Path(self._config.general.ivr_script)

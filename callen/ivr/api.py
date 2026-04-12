@@ -25,6 +25,7 @@ _cmd_queue: SIPCommandQueue | None = None
 _operator_state = None
 _event_bus = None
 _config = None
+_db = None
 _make_outbound_call = None
 _transcription_mgr = None
 _active_taps: dict[str, list] = {}  # call_id -> [caller_tap, tech_tap]
@@ -301,6 +302,26 @@ def record_voicemail(call: CallenCall, prompt: str | None = None):
         "caller_id": call.caller_id,
         "path": vm_path,
     })
+
+    # Kick off post-transcription in the background — we don't tap the
+    # voicemail audio live (it's a single-channel recording), so we read
+    # the WAV off disk after the fact and feed it through Parakeet.
+    # This only runs if the transcription manager was set up at startup.
+    if _transcription_mgr is not None:
+        try:
+            from callen.transcription.post import transcribe_voicemail
+            from callen.storage.db import Database  # noqa: F401 (type hint only)
+
+            transcribe_voicemail(
+                wav_path=vm_path,
+                call_id=call.uuid,
+                processor=_transcription_mgr._processor,
+                db=_db,
+                event_bus=_event_bus,
+                speaker="caller",
+            )
+        except Exception:
+            log.exception("Failed to kick off voicemail transcription")
 
     say(call, "Thank you. Goodbye.", repeat=False)
     hangup(call)

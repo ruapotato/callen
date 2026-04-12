@@ -598,17 +598,59 @@ body {
     font-family: var(--mono);
     color: var(--text-faint);
     flex: 1;
+    font-size: 10px;
 }
 
-.agent-close {
-    background: transparent;
-    border: none;
+.agent-turn {
+    font-size: 10px;
     color: var(--text-dim);
-    font-size: 20px;
-    cursor: pointer;
-    line-height: 1;
+    background: var(--bg-elev3);
+    padding: 1px 8px;
+    border-radius: 10px;
 }
-.agent-close:hover { color: var(--red); }
+
+.agent-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    padding: 3px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 11px;
+    font-family: var(--sans);
+}
+.agent-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+.agent-btn#agent-minimize {
+    padding: 1px 10px;
+    font-size: 18px;
+    line-height: 1;
+    border-color: transparent;
+}
+.agent-btn#agent-minimize:hover { color: var(--red); border-color: var(--red); }
+
+.agent-conversation-break {
+    border-top: 1px dashed var(--border-strong);
+    margin: 14px 0;
+    padding-top: 8px;
+    color: var(--text-faint);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.agent-prompt-echo {
+    background: var(--accent-bg);
+    border-left: 3px solid var(--accent);
+    padding: 8px 12px;
+    margin: 12px 0 8px 0;
+    border-radius: 0 4px 4px 0;
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 13px;
+}
 
 .agent-drawer-body {
     flex: 1;

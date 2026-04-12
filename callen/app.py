@@ -188,6 +188,7 @@ def main(config_path: str = "config.toml"):
             return None
 
     api._make_outbound_call = make_outbound_call
+    api._db = db
 
     # Outbound module (technician-first bridging)
     outbound.configure(
@@ -221,6 +222,55 @@ def main(config_path: str = "config.toml"):
         config.web, call_registry, operator_state, event_bus, db,
         agent_runner=agent_runner,
     )
+
+    # --- Auto-agent: review voicemails as soon as they're transcribed ---
+    def on_voicemail_transcribed(data):
+        """Fire a claude headless run to review the voicemail transcript
+        and update the incident with a proper subject + summary note.
+        Runs autonomously so it doesn't clobber the operator's interactive
+        conversation state."""
+        call_id = data.get("call_id")
+        if not call_id:
+            return
+        call = db.get_call(call_id)
+        if not call or not call.get("incident_id"):
+            return
+        incident_id = call["incident_id"]
+        caller_id = call.get("caller_id") or "unknown"
+        transcript_preview = (data.get("text") or "")[:400]
+
+        prompt = (
+            f"Autonomous review: a voicemail was just received and transcribed "
+            f"for {incident_id} (from {caller_id}).\n\n"
+            f"Transcript preview: {transcript_preview}\n\n"
+            f"Do the following using the ./tools/* commands:\n"
+            f"1. Run ./tools/get-transcript --incident {incident_id} --text to see the full transcript\n"
+            f"2. Decide on a clear, descriptive subject for {incident_id} that reflects what "
+            f"the caller actually said, and set it via ./tools/update-incident {incident_id} --subject \"...\"\n"
+            f"3. Add an internal note summarizing the voicemail in 2-3 sentences via "
+            f"./tools/note-incident {incident_id} \"...\"\n"
+            f"4. If the caller stated their name, set it on the contact via "
+            f"./tools/update-contact (look up the contact id via ./tools/get-incident {incident_id})\n"
+            f"5. If the voicemail sounds urgent, set priority high via ./tools/update-incident\n\n"
+            f"Respond with one sentence describing what you changed."
+        )
+
+        async def _start():
+            try:
+                await agent_runner.start(
+                    prompt,
+                    context={"incident_id": incident_id, "auto": True, "trigger": "voicemail"},
+                    autonomous=True,
+                )
+            except Exception:
+                log.exception("Failed to start auto-agent for voicemail")
+
+        try:
+            asyncio.run_coroutine_threadsafe(_start(), web_loop)
+        except Exception:
+            log.exception("Failed to schedule voicemail auto-review")
+
+    event_bus.subscribe("voicemail.transcribed", on_voicemail_transcribed)
 
     def run_web():
         asyncio.set_event_loop(web_loop)
