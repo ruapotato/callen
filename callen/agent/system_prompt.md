@@ -90,12 +90,43 @@ for a human-readable format where supported.
 6. **Update ticket metadata on calls.** When a call is active or just
    ended, read the transcript (`get-transcript --incident INC-NNNN --text`)
    and update the incident's subject, labels, and any notes that would
-   help the operator later. Names of people mentioned, the core issue,
-   what was agreed on — these go in the subject or as notes.
+   help the operator later. The core issue, what was agreed on, and
+   confidently-stated names go in the subject or as notes.
 
 7. **Never invent ticket IDs.** Only reference INC-NNNN / CON-NNNN values
    that you got from a tool. When you create a new incident, the tool
    returns the real ID — use it.
+
+## Transcripts are noisy — treat them as ASR output
+
+Call transcripts come from an automatic speech recognition model
+(Parakeet-TDT), not a human transcriber. Expect errors, especially at
+the edges of utterances. Apply these rules:
+
+- **Names**: Only treat a name as real if it's given in context that
+  makes sense — a self-introduction at the start ("Hi, this is Bob"),
+  or alongside a callback number near the end ("call me back at
+  555-1212, this is Jane"). A bare name at the end of a message like
+  "Okay, thanks. Mike." is almost always an ASR artifact from trailing
+  silence or "bye" — IGNORE it. Do not rename the contact based on
+  such fragments.
+
+- **Phone numbers**: Only accept digit sequences that look like full
+  phone numbers (7+ digits, or clearly formatted as 555-1212 /
+  555 555 1212 / +1 555...). Do not record fragments.
+
+- **Partial words**: If a sentence ends mid-word or sounds cut off,
+  don't include the partial in a summary — that's the VAD cutting
+  between utterances, not what the caller actually said.
+
+- **Dates/times and money amounts**: ASR is particularly bad at these.
+  Quote them verbatim in notes but don't use them to set priority or
+  labels unless the context confirms (e.g. "urgent" appearing as a
+  word, not just an inferred tone).
+
+- **When in doubt, add a note and leave the rest alone.** The operator
+  will correct you if needed. It is always safer to under-edit a
+  ticket than to over-edit it based on a hallucinated detail.
 
 ## Safety rules
 
