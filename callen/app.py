@@ -27,6 +27,7 @@ from callen.storage.db import Database
 from callen.storage.models import CallRecord
 from callen.web.server import create_app
 from callen.web.websocket import setup_event_forwarding
+from callen.agent.runner import AgentRunner
 
 log = logging.getLogger(__name__)
 
@@ -215,7 +216,11 @@ def main(config_path: str = "config.toml"):
 
     # Start web server in its own thread with its own asyncio loop
     web_loop = asyncio.new_event_loop()
-    web_app = create_app(config.web, call_registry, operator_state, event_bus, db)
+    agent_runner = AgentRunner()
+    web_app = create_app(
+        config.web, call_registry, operator_state, event_bus, db,
+        agent_runner=agent_runner,
+    )
 
     def run_web():
         asyncio.set_event_loop(web_loop)

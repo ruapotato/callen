@@ -24,6 +24,7 @@ def create_app(
     operator_state: OperatorState,
     event_bus: EventBus,
     db: Database,
+    agent_runner=None,
 ) -> Quart:
     """Create and configure the Quart application."""
     static_dir = Path(__file__).parent / "static"
@@ -34,11 +35,14 @@ def create_app(
     app.config["operator_state"] = operator_state
     app.config["event_bus"] = event_bus
     app.config["db"] = db
+    app.config["agent_runner"] = agent_runner
 
     # Register routes
     from callen.web.routes import bp as routes_bp
     from callen.web.websocket import bp as ws_bp
+    from callen.web.agent_routes import bp as agent_bp
     app.register_blueprint(routes_bp)
     app.register_blueprint(ws_bp)
+    app.register_blueprint(agent_bp)
 
     return app
