@@ -96,6 +96,8 @@ def cmd_get_incident(args):
     inc["entries"] = db.list_incident_entries(args.incident_id)
     inc["calls"] = db.get_calls_for_incident(args.incident_id)
     inc["transcript"] = db.get_transcript_for_incident(args.incident_id)
+    inc["emails"] = db.list_emails_for_incident(args.incident_id)
+    inc["todos"] = db.list_todos(args.incident_id)
     if inc.get("contact_id"):
         inc["contact"] = db.get_contact(inc["contact_id"])
     _out(inc, pretty=args.pretty)
@@ -534,6 +536,80 @@ def cmd_search(args):
             print("(no matches)")
     else:
         _out(results)
+
+
+# --- Todos (actionable checklist per incident) ---
+
+
+def cmd_list_todos(args):
+    db = _db(args)
+    rows = db.list_todos(args.incident_id)
+    if args.pretty:
+        if not rows:
+            print("(no todos)")
+            return
+        for r in rows:
+            mark = "[x]" if r["done"] else "[ ]"
+            print(f"  {r['id']:4d} {mark} {r['text']}")
+        return
+    _out(rows)
+
+
+def cmd_add_todo(args):
+    db = _db(args)
+    if not db.get_incident(args.incident_id):
+        _err(f"incident not found: {args.incident_id}")
+    text = args.text
+    if text == "-":
+        text = sys.stdin.read().strip()
+    if not text:
+        _err("empty todo text")
+    tid = db.add_todo(args.incident_id, text, author=args.author)
+    db.add_incident_entry(
+        args.incident_id, "todo_added", author=args.author,
+        payload={"todo_id": tid, "text": text},
+    )
+    _out({"todo_id": tid, "incident_id": args.incident_id, "text": text})
+
+
+def cmd_complete_todo(args):
+    db = _db(args)
+    todo = db.get_todo(args.todo_id)
+    if not todo:
+        _err(f"todo not found: {args.todo_id}")
+    db.update_todo(args.todo_id, done=True)
+    db.add_incident_entry(
+        todo["incident_id"], "todo_done", author=args.author,
+        payload={"todo_id": args.todo_id, "text": todo["text"]},
+    )
+    _out(db.get_todo(args.todo_id))
+
+
+def cmd_uncomplete_todo(args):
+    db = _db(args)
+    todo = db.get_todo(args.todo_id)
+    if not todo:
+        _err(f"todo not found: {args.todo_id}")
+    db.update_todo(args.todo_id, done=False)
+    _out(db.get_todo(args.todo_id))
+
+
+def cmd_update_todo(args):
+    db = _db(args)
+    todo = db.get_todo(args.todo_id)
+    if not todo:
+        _err(f"todo not found: {args.todo_id}")
+    db.update_todo(args.todo_id, text=args.text)
+    _out(db.get_todo(args.todo_id))
+
+
+def cmd_delete_todo(args):
+    db = _db(args)
+    todo = db.get_todo(args.todo_id)
+    if not todo:
+        _err(f"todo not found: {args.todo_id}")
+    db.delete_todo(args.todo_id)
+    _out({"deleted": args.todo_id, "incident_id": todo["incident_id"]})
 
 
 # --- Emails (triage queue + agent-sent replies) ---
@@ -998,6 +1074,35 @@ def build_parser() -> argparse.ArgumentParser:
     pp = sub.add_parser("search", help="Fuzzy search contacts and incidents")
     pp.add_argument("query", help="partial name, phone digits, email, or subject")
     pp.set_defaults(func=cmd_search)
+
+    # todos
+    pp = sub.add_parser("list-todos", help="Show the todo checklist for an incident")
+    pp.add_argument("incident_id")
+    pp.set_defaults(func=cmd_list_todos)
+
+    pp = sub.add_parser("add-todo", help="Add a todo item to an incident")
+    pp.add_argument("incident_id")
+    pp.add_argument("text", help="todo text (use - for stdin)")
+    pp.add_argument("--author", default="agent")
+    pp.set_defaults(func=cmd_add_todo)
+
+    pp = sub.add_parser("complete-todo", help="Mark a todo as done")
+    pp.add_argument("todo_id", type=int)
+    pp.add_argument("--author", default="operator")
+    pp.set_defaults(func=cmd_complete_todo)
+
+    pp = sub.add_parser("uncomplete-todo", help="Mark a done todo as not done")
+    pp.add_argument("todo_id", type=int)
+    pp.set_defaults(func=cmd_uncomplete_todo)
+
+    pp = sub.add_parser("update-todo", help="Edit a todo's text")
+    pp.add_argument("todo_id", type=int)
+    pp.add_argument("text")
+    pp.set_defaults(func=cmd_update_todo)
+
+    pp = sub.add_parser("delete-todo", help="Delete a todo")
+    pp.add_argument("todo_id", type=int)
+    pp.set_defaults(func=cmd_delete_todo)
 
     # emails — triage queue + outbound
     pp = sub.add_parser("list-pending-emails", help="Inbound emails not yet routed to an incident")

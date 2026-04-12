@@ -246,6 +246,15 @@ def bridge_to_operator(call: CallenCall):
                 except Exception:
                     pass
 
+            # Signal that a bridged call just finished. The app-level
+            # subscriber kicks off an autonomous agent review of the
+            # transcript so the ticket gets subject/todos/notes updated.
+            _event_bus.publish("call.bridge_completed", {
+                "incident_id": getattr(call, "incident_id", None),
+                "call_id": call.uuid,
+                "caller_id": call.caller_id,
+            })
+
     except Exception:
         log.exception("Bridge error for call %s", call.uuid[:8])
     finally:

@@ -329,10 +329,107 @@ function renderIncidentDetail(inc) {
         onclick: () => updateStatusPrompt(inc.id, inc.status),
     }, '🔄 Status'));
 
-    // Timeline body
+    // Body: todos section first, then the timeline
     const body = $('detail-body');
     clear(body);
+    body.appendChild(buildTodos(inc));
     body.appendChild(buildTimeline(inc));
+}
+
+// ============ Todos ============
+
+function buildTodos(inc) {
+    const section = el('div', { class: 'todos-section' });
+
+    const header = el('div', { class: 'todos-header' }, [
+        el('h3', {}, 'Todos'),
+        el('span', { class: 'todos-count' }, `${(inc.todos || []).filter(t => !t.done).length} open`),
+    ]);
+    section.appendChild(header);
+
+    const list = el('div', { class: 'todos-list' });
+    const todos = (inc.todos || []).slice().sort((a, b) => {
+        if (a.done !== b.done) return a.done - b.done;
+        return (a.position || 0) - (b.position || 0);
+    });
+
+    for (const t of todos) {
+        const row = el('div', { class: 'todo-row' + (t.done ? ' done' : '') });
+        const checkbox = el('input', {
+            type: 'checkbox',
+            class: 'todo-check',
+        });
+        checkbox.checked = !!t.done;
+        checkbox.addEventListener('change', () => toggleTodo(inc.id, t.id, checkbox.checked));
+
+        const text = el('span', { class: 'todo-text' }, t.text);
+        const del = el('button', {
+            class: 'todo-delete',
+            title: 'Delete this todo',
+            onclick: () => deleteTodo(inc.id, t.id),
+        }, '×');
+
+        row.appendChild(checkbox);
+        row.appendChild(text);
+        row.appendChild(del);
+        list.appendChild(row);
+    }
+
+    if (todos.length === 0) {
+        list.appendChild(el('div', { class: 'todos-empty' },
+            'No todos yet. The agent will populate them after calls, or add one below.'));
+    }
+
+    section.appendChild(list);
+
+    // Inline "add todo" input
+    const addRow = el('form', {
+        class: 'todo-add-row',
+        onsubmit: (e) => {
+            e.preventDefault();
+            const input = addRow.querySelector('input');
+            const text = input.value.trim();
+            if (!text) return;
+            addTodo(inc.id, text);
+            input.value = '';
+        },
+    });
+    addRow.appendChild(el('input', {
+        type: 'text',
+        placeholder: '+ Add a todo… (Enter to save)',
+        spellcheck: 'false',
+    }));
+    section.appendChild(addRow);
+
+    return section;
+}
+
+async function toggleTodo(incidentId, todoId, done) {
+    try {
+        await api(`/todos/${todoId}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ done, author: 'operator' }),
+        });
+        selectIncident(incidentId);
+    } catch (e) { alert(`Failed: ${e.message}`); }
+}
+
+async function addTodo(incidentId, text) {
+    try {
+        await api(`/incidents/${incidentId}/todos`, {
+            method: 'POST',
+            body: JSON.stringify({ text, author: 'operator' }),
+        });
+        selectIncident(incidentId);
+    } catch (e) { alert(`Failed: ${e.message}`); }
+}
+
+async function deleteTodo(incidentId, todoId) {
+    if (!confirm('Delete this todo?')) return;
+    try {
+        await api(`/todos/${todoId}`, { method: 'DELETE' });
+        selectIncident(incidentId);
+    } catch (e) { alert(`Failed: ${e.message}`); }
 }
 
 function buildTimeline(inc) {

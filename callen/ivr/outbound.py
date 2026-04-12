@@ -285,6 +285,14 @@ def _run_originate(incident_id: str, destination: str, display_name: str):
         api._stop_transcription(contact_call, caller_media, tech_media)
         _sip(br.disconnect_calls, caller_media, tech_media)
 
+        # Trigger the same bridge-completed event path as inbound bridges
+        # so the auto-agent review runs on outbound calls too.
+        _event_bus.publish("call.bridge_completed", {
+            "incident_id": incident_id,
+            "call_id": contact_call.uuid,
+            "caller_id": clean_dest,
+        })
+
         # Propagate hangup to the other leg
         if contact_call.state == CallState.DISCONNECTED and tech_call.state != CallState.DISCONNECTED:
             try:

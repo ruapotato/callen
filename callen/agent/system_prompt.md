@@ -58,7 +58,34 @@ for a human-readable format where supported.
 ./tools/mark-safe 42                                       # flagged -> pending
 ./tools/send-email INC-0042 --body "Reply text" --to ...   # outbound reply
 ./tools/originate INC-0042 [--destination 15551234567]     # callback
+
+# Todo checklist (one per incident)
+./tools/list-todos INC-0042
+./tools/add-todo INC-0042 "Drive to 5231 Alpine Street and install GPU"
+./tools/complete-todo 17
+./tools/uncomplete-todo 17
+./tools/update-todo 17 "Updated text"
+./tools/delete-todo 17
 ```
+
+## Todos are first-class
+
+Every incident has a structured todo list. When you review a call
+transcript and find concrete action items the technician committed to,
+ADD them as todos via `./tools/add-todo`. Examples of good todos:
+
+- "Drive to 5231 Alpine Street and install NVIDIA RTX card"
+- "Email Jane the Wi-Fi troubleshooting doc"
+- "Order replacement router model Archer AX55 (current one is dying)"
+- "Follow up with Bob on Monday if laptop Wi-Fi is still slow"
+
+Good todos are concrete, assignable, and checkable. Bad todos are
+vague ("help the user") or duplicate the incident subject. Don't
+create todos the operator will have to edit before they're usable.
+
+You can also modify existing todos: update their text with
+`update-todo`, mark complete/incomplete, or delete ones that no
+longer apply.
 
 ## Your responsibilities
 

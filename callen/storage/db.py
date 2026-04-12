@@ -18,7 +18,7 @@ from callen.storage.models import (
 
 log = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 3
+CURRENT_SCHEMA_VERSION = 4
 
 # --- Schema ---
 
@@ -219,6 +219,9 @@ class Database:
         if self._current_version() < 3:
             self._migrate_to_v3()
 
+        if self._current_version() < 4:
+            self._migrate_to_v4()
+
         log.info("Database ready (schema v%d): %s", self._current_version(), self._path)
 
     def _current_version(self) -> int:
@@ -284,6 +287,28 @@ class Database:
         conn.execute("INSERT OR IGNORE INTO schema_version VALUES (2)")
         conn.commit()
         log.info("Migration v1 -> v2 complete (%d calls migrated)", len(existing))
+
+    def _migrate_to_v4(self):
+        """Add incident_todos table — structured checklist per incident."""
+        log.info("Migrating database schema v3 -> v4 (incident todos)")
+        conn = self._conn()
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS incident_todos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                incident_id TEXT NOT NULL REFERENCES incidents(id),
+                text TEXT NOT NULL,
+                done INTEGER NOT NULL DEFAULT 0,
+                author TEXT DEFAULT '',
+                created_at REAL NOT NULL DEFAULT (unixepoch('subsec')),
+                completed_at REAL,
+                position INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE INDEX IF NOT EXISTS idx_incident_todos_incident
+                ON incident_todos(incident_id, position);
+            INSERT OR IGNORE INTO schema_version VALUES (4);
+        """)
+        conn.commit()
+        log.info("Migration v3 -> v4 complete")
 
     def _migrate_to_v3(self):
         """Add email status + status_reason columns for the triage workflow."""
@@ -784,6 +809,71 @@ class Database:
             (status,),
         )
         self._conn().commit()
+
+    # --- Todos ---
+
+    def list_todos(self, incident_id: str) -> list[dict]:
+        rows = self._conn().execute(
+            """SELECT * FROM incident_todos
+               WHERE incident_id = ?
+               ORDER BY done ASC, position ASC, id ASC""",
+            (incident_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def add_todo(self, incident_id: str, text: str, author: str = "operator") -> int:
+        conn = self._conn()
+        # Append to the end: position = (max existing) + 1
+        row = conn.execute(
+            "SELECT COALESCE(MAX(position), 0) FROM incident_todos WHERE incident_id = ?",
+            (incident_id,),
+        ).fetchone()
+        next_pos = (row[0] or 0) + 1
+        cur = conn.execute(
+            """INSERT INTO incident_todos (incident_id, text, author, position)
+               VALUES (?, ?, ?, ?)""",
+            (incident_id, text, author, next_pos),
+        )
+        conn.commit()
+        return cur.lastrowid
+
+    def update_todo(
+        self, todo_id: int,
+        text: str | None = None,
+        done: bool | None = None,
+    ) -> bool:
+        conn = self._conn()
+        sets = []
+        args: list = []
+        if text is not None:
+            sets.append("text = ?")
+            args.append(text)
+        if done is not None:
+            sets.append("done = ?")
+            args.append(1 if done else 0)
+            sets.append("completed_at = ?")
+            args.append(time.time() if done else None)
+        if not sets:
+            return False
+        args.append(todo_id)
+        cur = conn.execute(
+            f"UPDATE incident_todos SET {', '.join(sets)} WHERE id = ?",
+            args,
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+    def delete_todo(self, todo_id: int) -> bool:
+        conn = self._conn()
+        cur = conn.execute("DELETE FROM incident_todos WHERE id = ?", (todo_id,))
+        conn.commit()
+        return cur.rowcount > 0
+
+    def get_todo(self, todo_id: int) -> dict | None:
+        row = self._conn().execute(
+            "SELECT * FROM incident_todos WHERE id = ?", (todo_id,)
+        ).fetchone()
+        return dict(row) if row else None
 
     # --- Emails ---
 

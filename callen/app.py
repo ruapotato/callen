@@ -272,6 +272,68 @@ def main(config_path: str = "config.toml"):
 
     event_bus.subscribe("voicemail.transcribed", on_voicemail_transcribed)
 
+    # --- Auto-agent: review bridged calls as soon as they complete ---
+    def on_bridge_completed(data):
+        incident_id = data.get("incident_id")
+        if not incident_id:
+            return
+
+        # Give the transcription worker threads a moment to flush their
+        # final segments to the DB before the agent reads them.
+        import threading
+        def _wait_and_fire():
+            import time as _time
+            _time.sleep(2.0)
+            prompt = (
+                f"Autonomous review: a bridged phone call just finished on {incident_id}.\n\n"
+                f"Do the following using the ./tools/* commands:\n"
+                f"1. ./tools/get-transcript --incident {incident_id} --text to read what was said\n"
+                f"2. Update the incident subject via ./tools/update-incident to accurately describe "
+                f"   the issue the caller raised, based on the actual conversation\n"
+                f"3. Add a concise summary note (2-4 sentences) via ./tools/note-incident covering:\n"
+                f"   - who the caller is and what they want\n"
+                f"   - what the technician agreed to do\n"
+                f"   - any key details (addresses, times, model numbers, etc.)\n"
+                f"4. For every concrete action item the technician agreed to, add a todo\n"
+                f"   via ./tools/add-todo {incident_id} \"...\"\n"
+                f"   Example: if the tech said 'I'll come by in 15 minutes to install it',\n"
+                f"   add 'Drive to <address> and install graphics card' as a todo.\n"
+                f"5. If the caller gave their name in a clear self-introduction at the start,\n"
+                f"   set it on the contact via ./tools/update-contact (look up the contact id\n"
+                f"   via ./tools/get-incident). Do NOT update the name based on a trailing\n"
+                f"   fragment — see transcript-quality rules.\n"
+                f"6. If the call indicates urgency, bump priority to high.\n\n"
+                f"Respond with one sentence describing what you changed and how many todos\n"
+                f"you created."
+            )
+
+            async def _start():
+                try:
+                    await agent_runner.start(
+                        prompt,
+                        context={
+                            "incident_id": incident_id,
+                            "trigger": "call.bridge_completed",
+                            "auto": True,
+                        },
+                        autonomous=True,
+                    )
+                except Exception:
+                    log.exception("Failed to start auto-agent for bridged call")
+
+            try:
+                asyncio.run_coroutine_threadsafe(_start(), web_loop)
+            except Exception:
+                log.exception("Failed to schedule bridged-call auto-review")
+
+        threading.Thread(
+            target=_wait_and_fire,
+            name=f"bridge-review-{incident_id}",
+            daemon=True,
+        ).start()
+
+    event_bus.subscribe("call.bridge_completed", on_bridge_completed)
+
     def run_web():
         asyncio.set_event_loop(web_loop)
         # Forward EventBus events into the web loop's WebSocket broadcast funcs

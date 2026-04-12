@@ -121,7 +121,7 @@ async def list_incidents():
 
 @bp.route("/api/incidents/<incident_id>")
 async def incident_detail(incident_id):
-    """Full incident context: timeline, calls, transcripts, contact, emails."""
+    """Full incident context: timeline, calls, transcripts, contact, emails, todos."""
     db = _db()
     inc = db.get_incident(incident_id)
     if not inc:
@@ -131,9 +131,66 @@ async def incident_detail(incident_id):
     inc["calls"] = db.get_calls_for_incident(incident_id)
     inc["transcript"] = db.get_transcript_for_incident(incident_id)
     inc["emails"] = db.list_emails_for_incident(incident_id)
+    inc["todos"] = db.list_todos(incident_id)
     if inc.get("contact_id"):
         inc["contact"] = db.get_contact(inc["contact_id"])
     return jsonify(inc)
+
+
+# --- Todos ---
+
+
+@bp.route("/api/incidents/<incident_id>/todos")
+async def list_incident_todos(incident_id):
+    return jsonify(_db().list_todos(incident_id))
+
+
+@bp.route("/api/incidents/<incident_id>/todos", methods=["POST"])
+async def add_incident_todo(incident_id):
+    data = await request.get_json() or {}
+    text = (data.get("text") or "").strip()
+    author = data.get("author", "operator")
+    if not text:
+        return jsonify({"error": "text required"}), 400
+    db = _db()
+    if not db.get_incident(incident_id):
+        return jsonify({"error": "incident not found"}), 404
+    todo_id = db.add_todo(incident_id, text, author=author)
+    db.add_incident_entry(
+        incident_id, "todo_added", author=author,
+        payload={"todo_id": todo_id, "text": text},
+    )
+    return jsonify(db.get_todo(todo_id)), 201
+
+
+@bp.route("/api/todos/<int:todo_id>", methods=["PATCH"])
+async def update_todo(todo_id):
+    data = await request.get_json() or {}
+    db = _db()
+    todo = db.get_todo(todo_id)
+    if not todo:
+        return jsonify({"error": "not found"}), 404
+
+    done = data.get("done")
+    text = data.get("text")
+    db.update_todo(todo_id, text=text, done=done)
+    if done is True:
+        db.add_incident_entry(
+            todo["incident_id"], "todo_done",
+            author=data.get("author", "operator"),
+            payload={"todo_id": todo_id, "text": todo["text"]},
+        )
+    return jsonify(db.get_todo(todo_id))
+
+
+@bp.route("/api/todos/<int:todo_id>", methods=["DELETE"])
+async def delete_todo(todo_id):
+    db = _db()
+    todo = db.get_todo(todo_id)
+    if not todo:
+        return jsonify({"error": "not found"}), 404
+    db.delete_todo(todo_id)
+    return jsonify({"deleted": todo_id})
 
 
 @bp.route("/api/incidents/<incident_id>", methods=["PATCH"])
