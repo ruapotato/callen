@@ -117,10 +117,15 @@ class AudioTap(pj.AudioMediaPort):
         self.label = label
         self._on_audio = on_audio
         fmt = pj.MediaFormatAudio()
+        fmt.type = pj.PJMEDIA_TYPE_AUDIO
+        fmt.id = pj.PJMEDIA_FORMAT_L16
         fmt.clockRate = 8000
         fmt.channelCount = 1
         fmt.bitsPerSample = 16
         fmt.frameTimeUsec = 20000
+        # 8000 samples/sec * 16 bits * 1 channel = 128000 bps
+        fmt.avgBps = 128000
+        fmt.maxBps = 128000
         self.createPort("tap-" + label, fmt)
 
     def onFrameReceived(self, frame):

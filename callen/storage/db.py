@@ -76,10 +76,12 @@ class Database:
 
     def _conn(self) -> sqlite3.Connection:
         if not hasattr(self._local, "conn") or self._local.conn is None:
-            self._local.conn = sqlite3.connect(self._path)
+            self._local.conn = sqlite3.connect(self._path, timeout=10.0)
             self._local.conn.row_factory = sqlite3.Row
             self._local.conn.execute("PRAGMA journal_mode=WAL")
             self._local.conn.execute("PRAGMA foreign_keys=ON")
+            self._local.conn.execute("PRAGMA busy_timeout=10000")
+            self._local.conn.execute("PRAGMA synchronous=NORMAL")
         return self._local.conn
 
     def initialize(self):

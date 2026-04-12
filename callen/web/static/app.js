@@ -49,6 +49,15 @@ document.querySelectorAll('.status-btn').forEach(btn => {
 async function loadActiveCalls() {
     state.activeCalls = await api('/calls');
     renderCallList();
+
+    // Auto-select the first active call if nothing's selected (or if the
+    // currently-selected call is no longer active and we have a new one).
+    if (state.activeCalls.length > 0) {
+        const stillActive = state.activeCalls.some(c => c.id === state.selectedCallId);
+        if (!stillActive) {
+            selectCall(state.activeCalls[0].id);
+        }
+    }
 }
 
 function renderCallList() {
@@ -69,17 +78,32 @@ function renderCallList() {
     `).join('');
 }
 
-function selectCall(callId) {
+async function selectCall(callId) {
     state.selectedCallId = callId;
     renderCallList();
-    connectTranscriptWs(callId);
-    loadNotes(callId);
 
     const call = state.activeCalls.find(c => c.id === callId);
     const header = document.getElementById('transcript-header');
     header.textContent = call
         ? `Live transcript: ${call.caller_id} (${call.state})`
         : 'Transcript';
+
+    // Clear existing display and load any transcripts already saved to the DB
+    const container = document.getElementById('transcript-container');
+    container.innerHTML = '';
+
+    try {
+        const saved = await api(`/transcripts/${callId}`);
+        if (saved && saved.length > 0) {
+            saved.forEach(seg => appendTranscriptSegment(seg));
+        }
+    } catch (e) {
+        console.error('Failed to load saved transcripts', e);
+    }
+
+    // Now connect to the live WebSocket for new segments
+    connectTranscriptWs(callId);
+    loadNotes(callId);
 }
 
 // --- Live transcript WebSocket ---
@@ -89,7 +113,7 @@ function connectTranscriptWs(callId) {
         state.transcriptWs.close();
     }
 
-    document.getElementById('transcript-container').innerHTML = '';
+    // Don't clear the container here — selectCall() handles back-fill first.
 
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${proto}//${location.host}/ws/transcript/${callId}`);

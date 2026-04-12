@@ -48,15 +48,10 @@ def IVR(call):
         key = dtmf(call, count=1, timeout=10)
 
         if key == '1':
-            if operator_available():
-                bridge_to_operator(call)
-                # After bridge ends (either party hung up), we're done
-                return
-            else:
-                say(call, (
-                    "The technician is currently on another call. "
-                    "Press 2 to leave a voicemail, or press 1 to hold."
-                ), repeat=False)
+            # bridge_to_operator() handles the busy-routing-to-voicemail itself,
+            # so we just hand the call off and exit when it returns.
+            bridge_to_operator(call)
+            return
         elif key == '2':
             record_voicemail(call)
             return

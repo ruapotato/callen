@@ -27,8 +27,7 @@ class TranscriptionManager:
         """Called by TranscriptionStream when a segment is transcribed."""
         self._event_bus.publish("transcript.update", data)
 
-    def start_for_call(self, call_id: str, call_start_time: float,
-                       caller_audio_cb, tech_audio_cb):
+    def start_for_call(self, call_id: str, call_start_time: float, **_kwargs):
         """
         Create and start transcription streams for both channels.
 

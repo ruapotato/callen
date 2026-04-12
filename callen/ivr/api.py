@@ -20,12 +20,33 @@ from callen.sip.dtmf import collect_dtmf
 
 log = logging.getLogger(__name__)
 
-# Set by IVREngine before spawning IVR threads
+# Set by IVREngine / app before spawning IVR threads
 _cmd_queue: SIPCommandQueue | None = None
 _operator_state = None
 _event_bus = None
 _config = None
 _make_outbound_call = None
+_transcription_mgr = None
+_active_taps: dict[str, list] = {}  # call_id -> [caller_tap, tech_tap]
+
+BUSY_VOICEMAIL_PROMPT = (
+    "Sorry, all technicians are currently busy. "
+    "Please leave your name, your phone number, and a brief message after the beep. "
+    "We will get back to you as soon as possible. "
+    "Press pound when you are finished."
+)
+
+NO_ANSWER_VOICEMAIL_PROMPT = (
+    "Sorry, the technician is not available right now. "
+    "Please leave your name, your phone number, and a brief message after the beep. "
+    "We will get back to you as soon as possible. "
+    "Press pound when you are finished."
+)
+
+# Hang up the outbound leg if the operator hasn't answered within this many
+# seconds. Tuned to fire BEFORE typical cell carrier voicemail (20-25s) so
+# the caller lands in Callen's voicemail instead of the cell carrier's.
+RING_TIMEOUT = 18.0
 
 
 def _sip(fn, *args, **kwargs):
@@ -137,8 +158,7 @@ def bridge_to_operator(call: CallenCall):
     from callen.sip import bridge as br
 
     if not _operator_state.is_available:
-        say(call, "The operator is currently unavailable.", repeat=False)
-        record_voicemail(call)
+        record_voicemail(call, prompt=BUSY_VOICEMAIL_PROMPT)
         return
 
     say(call, "Connecting you now. Please hold.", repeat=False)
@@ -157,16 +177,35 @@ def bridge_to_operator(call: CallenCall):
         outbound_call = _sip(_make_outbound_call, call, dst_uri)
 
         if outbound_call is None:
-            say(call, "Could not reach the operator. Please leave a message.", repeat=False)
             _operator_state.auto_available()
-            record_voicemail(call)
+            record_voicemail(call, prompt=BUSY_VOICEMAIL_PROMPT)
             return
 
-        outbound_call.media_ready.wait(timeout=60)
-        if outbound_call.state == CallState.DISCONNECTED:
-            say(call, "The operator did not answer. Please leave a message.", repeat=False)
+        # Wait for the operator to actually pick up — CallState.ACTIVE means
+        # the call reached CONFIRMED (200 OK from the answering UA).
+        # Use a tight timeout (RING_TIMEOUT) so we hang up before the cell
+        # carrier's voicemail picks up — we want callers in OUR voicemail,
+        # not on the operator's cell carrier voicemail.
+        ring_deadline = time.time() + RING_TIMEOUT
+        while time.time() < ring_deadline:
+            if outbound_call.state == CallState.ACTIVE:
+                break
+            if outbound_call.state == CallState.DISCONNECTED:
+                break
+            if call.state == CallState.DISCONNECTED:
+                break
+            time.sleep(0.2)
+
+        if outbound_call.state != CallState.ACTIVE:
+            log.info("Operator did not answer within %ds — routing to voicemail",
+                     RING_TIMEOUT)
+            try:
+                _sip(outbound_call.hangup, pj.CallOpParam())
+            except Exception:
+                pass
             _operator_state.auto_available()
-            record_voicemail(call)
+            if call.state != CallState.DISCONNECTED:
+                record_voicemail(call, prompt=NO_ANSWER_VOICEMAIL_PROMPT)
             return
 
         caller_media = call.get_audio_media()
@@ -176,18 +215,29 @@ def bridge_to_operator(call: CallenCall):
             _sip(br.connect_calls, caller_media, tech_media)
             log.info("Call %s bridged to operator", call.uuid[:8])
 
+            # Start live transcription on both legs
+            _start_transcription(call, caller_media, tech_media)
+
             while (call.state != CallState.DISCONNECTED and
                    outbound_call.state != CallState.DISCONNECTED):
                 time.sleep(0.5)
 
+            _stop_transcription(call, caller_media, tech_media)
             _sip(br.disconnect_calls, caller_media, tech_media)
 
-            # If the operator hung up first, end the caller's leg immediately
+            # Whichever leg dropped first, terminate the other one immediately
             if (outbound_call.state == CallState.DISCONNECTED and
                     call.state != CallState.DISCONNECTED):
                 log.info("Operator hung up — terminating caller leg")
                 try:
                     _sip(call.hangup, pj.CallOpParam())
+                except Exception:
+                    pass
+            elif (call.state == CallState.DISCONNECTED and
+                    outbound_call.state != CallState.DISCONNECTED):
+                log.info("Caller hung up — terminating operator leg")
+                try:
+                    _sip(outbound_call.hangup, pj.CallOpParam())
                 except Exception:
                     pass
 
@@ -203,14 +253,20 @@ def bridge_to_operator(call: CallenCall):
         _event_bus.publish("call.ended", {"call_id": call.uuid})
 
 
-def record_voicemail(call: CallenCall):
-    """Record a voicemail message from the caller."""
+def record_voicemail(call: CallenCall, prompt: str | None = None):
+    """Record a voicemail message from the caller.
+
+    If prompt is given, that text is spoken instead of the default. Useful for
+    different contexts (busy vs caller-chosen voicemail).
+    """
     from callen.sip.media import CallRecorder
 
     if call.state == CallState.DISCONNECTED:
         return
 
-    say(call, "Please leave your message after the beep. Press pound when finished.", repeat=False)
+    if prompt is None:
+        prompt = "Please leave your message after the beep. Press pound when finished."
+    say(call, prompt, repeat=False)
     say(call, "Beep!", repeat=False)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -258,3 +314,61 @@ def caller_id(call: CallenCall) -> str:
 
 def operator_available() -> bool:
     return _operator_state.is_available
+
+
+# --- Internal helpers (not exposed to IVR scripts) ---
+
+def _start_transcription(call, caller_media, tech_media):
+    """Set up AudioTaps + transcription streams for a bridged call."""
+    if _transcription_mgr is None:
+        return
+
+    from callen.sip.media import AudioTap
+    from callen.sip import bridge as br
+
+    # Create the transcription streams first — they return audio feed callbacks
+    caller_feed, tech_feed = _transcription_mgr.start_for_call(
+        call_id=call.uuid,
+        call_start_time=call.answered_at or call.started_at,
+    )
+
+    # Create AudioTaps on the SIP thread (pjsua2 objects must be made there)
+    def _make_taps():
+        caller_tap = AudioTap("caller", caller_feed)
+        tech_tap = AudioTap("technician", tech_feed)
+        # Wire taps into the conference bridge — fan-out from each leg
+        br.connect_to_tap(caller_media, caller_tap)
+        br.connect_to_tap(tech_media, tech_tap)
+        return [caller_tap, tech_tap]
+
+    try:
+        taps = _sip(_make_taps)
+        _active_taps[call.uuid] = taps
+        log.info("Live transcription started for call %s", call.uuid[:8])
+    except Exception:
+        log.exception("Failed to start transcription for %s", call.uuid[:8])
+
+
+def _stop_transcription(call, caller_media, tech_media):
+    """Tear down transcription streams and AudioTaps."""
+    if _transcription_mgr is None:
+        return
+
+    from callen.sip import bridge as br
+
+    taps = _active_taps.pop(call.uuid, [])
+    if taps:
+        def _disconnect():
+            try: br.disconnect_tap(caller_media, taps[0])
+            except Exception: pass
+            try: br.disconnect_tap(tech_media, taps[1])
+            except Exception: pass
+        try:
+            _sip(_disconnect)
+        except Exception:
+            pass
+
+    try:
+        _transcription_mgr.stop_for_call(call.uuid)
+    except Exception:
+        log.exception("Error stopping transcription for %s", call.uuid[:8])

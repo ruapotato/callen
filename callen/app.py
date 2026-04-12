@@ -4,6 +4,7 @@
 
 """Top-level orchestrator — wires everything together and runs the system."""
 
+import asyncio
 import logging
 import signal
 import sys
@@ -24,6 +25,8 @@ from callen.state.operator import OperatorState
 from callen.state.calls import CallRegistry
 from callen.storage.db import Database
 from callen.storage.models import CallRecord
+from callen.web.server import create_app
+from callen.web.websocket import setup_event_forwarding
 
 log = logging.getLogger(__name__)
 
@@ -51,26 +54,68 @@ def main(config_path: str = "config.toml"):
     db = Database(config.general.db_path)
     db.initialize()
 
-    def on_call_ended(data):
-        call_id = data.get("call_id")
-        call = call_registry.get(call_id)
-        if call:
-            record = CallRecord(
-                id=call.uuid,
-                caller_id=call.caller_id,
-                started_at=call.started_at,
-                answered_at=call.answered_at,
-                ended_at=call.ended_at,
-                duration_seconds=call.duration,
-                consented=call.consented_to_recording,
-                was_bridged=(call.state == CallState.BRIDGED),
-            )
-            try:
-                db.save_call(record)
-            except Exception:
-                log.exception("Failed to save call record")
+    def _save_call_record(call):
+        record = CallRecord(
+            id=call.uuid,
+            caller_id=call.caller_id,
+            started_at=call.started_at,
+            answered_at=call.answered_at,
+            ended_at=call.ended_at,
+            duration_seconds=call.duration,
+            consented=call.consented_to_recording,
+            was_bridged=(call.state == CallState.BRIDGED),
+            state="active" if call.ended_at is None else "completed",
+        )
+        try:
+            db.save_call(record)
+        except Exception:
+            log.exception("Failed to save call record")
 
+    def on_call_incoming(data):
+        # Insert a stub row so transcript_segments FK can reference it
+        call = call_registry.get(data.get("call_id"))
+        if call:
+            _save_call_record(call)
+
+    def on_call_ended(data):
+        call = call_registry.get(data.get("call_id"))
+        if call:
+            _save_call_record(call)
+
+    event_bus.subscribe("call.incoming", on_call_incoming)
     event_bus.subscribe("call.ended", on_call_ended)
+
+    # Transcription manager (loads Parakeet model)
+    transcription_mgr = None
+    if config.transcription.enabled:
+        try:
+            from callen.transcription.parakeet import ParakeetProcessor
+            from callen.transcription.manager import TranscriptionManager
+            log.info("Loading Parakeet model (this takes a moment on first run)...")
+            processor = ParakeetProcessor(
+                model_id=config.transcription.model,
+                device=config.transcription.device,
+            )
+            processor.setup()
+            transcription_mgr = TranscriptionManager(
+                processor, event_bus, config.transcription.chunk_seconds,
+            )
+            log.info("Transcription enabled")
+        except Exception:
+            log.exception("Failed to load Parakeet — continuing without transcription")
+
+    api._transcription_mgr = transcription_mgr
+
+    # Save transcript segments to DB
+    def on_transcript(data):
+        try:
+            db.save_transcript_segment(
+                data["call_id"], data["speaker"],
+                data["text"], data["timestamp_offset"],
+            )
+        except Exception:
+            log.exception("Failed to save transcript segment")
+    event_bus.subscribe("transcript.update", on_transcript)
 
     ivr_engine = IVREngine(
         config=config,
@@ -106,12 +151,40 @@ def main(config_path: str = "config.toml"):
     # Register account on the SIP thread (all pjlib calls must happen there)
     cmd_queue.submit(sip_account.register).result(timeout=10)
 
-    log.info("=" * 60)
-    log.info("Callen IVR running — waiting for calls")
-    log.info("Press Ctrl+C to shut down")
-    log.info("=" * 60)
+    # Start web server in its own thread with its own asyncio loop
+    web_loop = asyncio.new_event_loop()
+    web_app = create_app(config.web, call_registry, operator_state, event_bus, db)
+
+    def run_web():
+        asyncio.set_event_loop(web_loop)
+        # Forward EventBus events into the web loop's WebSocket broadcast funcs
+        setup_event_forwarding(event_bus, web_loop)
+        try:
+            web_loop.run_until_complete(
+                web_app.run_task(
+                    host=config.web.host,
+                    port=config.web.port,
+                    shutdown_trigger=lambda: shutdown_event_async(web_loop),
+                )
+            )
+        except Exception:
+            log.exception("Web server crashed")
 
     shutdown_event = threading.Event()
+
+    async def shutdown_event_async(loop):
+        """Awaited by Quart; resolves when shutdown is requested."""
+        while not shutdown_event.is_set():
+            await asyncio.sleep(0.5)
+
+    web_thread = threading.Thread(target=run_web, name="web", daemon=True)
+    web_thread.start()
+
+    log.info("=" * 60)
+    log.info("Callen IVR running — waiting for calls")
+    log.info("Web dashboard: http://%s:%d", config.web.host, config.web.port)
+    log.info("Press Ctrl+C to shut down")
+    log.info("=" * 60)
 
     def shutdown(sig, frame):
         log.info("Shutting down...")

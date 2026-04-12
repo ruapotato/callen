@@ -1,10 +1,13 @@
-# Callen — IVR system for freesoftware.support
-# pjsua2 must be compiled from source (see README.md)
+# Callen — Python dependencies
+#
+# pjsua2 is NOT in this list — it must be compiled from pjproject source.
+# See README.md for build instructions.
 
-# ASR — Parakeet STT
+# ASR — Parakeet speech-to-text
 nemo_toolkit[asr]>=2.2.1
 torch>=2.1.0
 soundfile>=0.13.1
+webrtcvad-wheels>=2.0.14
 
 # Audio processing
 numpy<2.0
@@ -12,7 +15,3 @@ resampy>=0.4.3
 
 # Web interface
 quart>=0.19.0
-
-# System packages (install via apt):
-#   espeak-ng
-#   libpjproject-dev (or build pjproject from source)

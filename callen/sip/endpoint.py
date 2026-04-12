@@ -53,6 +53,15 @@ class SIPEndpoint:
         ep_cfg.logConfig.level = 3
         ep_cfg.logConfig.consoleLevel = 3
 
+        # Disable VAD/silence suppression — VoIP.ms calls were dropping audio
+        # during natural conversational pauses with VAD on.
+        ep_cfg.medConfig.noVad = True
+        # Larger jitter buffer helps with the WAN path to VoIP.ms
+        ep_cfg.medConfig.jbInit = 60
+        ep_cfg.medConfig.jbMinPre = 20
+        ep_cfg.medConfig.jbMaxPre = 240
+        ep_cfg.medConfig.jbMax = 360
+
         self._ep.libInit(ep_cfg)
 
         tp_cfg = pj.TransportConfig()
