@@ -18,25 +18,18 @@ log = logging.getLogger(__name__)
 
 
 def generate_tts_wav(text: str, output_path: str | None = None) -> str:
-    """Generate 8kHz mono 16-bit WAV from text via espeak-ng + sox."""
+    """Generate 8kHz mono 16-bit WAV from text via the configured TTS engine.
+
+    Routes through callen.tts.get_tts_engine() which returns a cached,
+    pre-warmed engine (Kokoro by default, espeak as fallback).
+    """
     if output_path is None:
         fd, output_path = tempfile.mkstemp(suffix=".wav", prefix="tts_")
         os.close(fd)
 
-    subprocess.run(
-        ["espeak-ng", "-w", output_path, text],
-        check=True,
-        capture_output=True,
-    )
-
-    resampled = output_path + ".8k.wav"
-    subprocess.run(
-        ["sox", output_path, "-r", "8000", "-c", "1", "-b", "16", resampled],
-        check=True,
-        capture_output=True,
-    )
-    os.replace(resampled, output_path)
-    return output_path
+    from callen.tts import get_tts_engine
+    engine = get_tts_engine()
+    return engine.synthesize(text, output_path)
 
 
 class PromptPlayer:

@@ -53,6 +53,15 @@ class TranscriptionConfig:
 
 
 @dataclass
+class TTSConfig:
+    """Text-to-speech engine selection + parameters."""
+    engine: str = "kokoro"       # "kokoro" or "espeak"
+    voice: str = "af_heart"      # kokoro: voice id; espeak: voice name
+    lang_code: str = "a"         # kokoro: 'a' = American English
+    device: str = ""             # kokoro: "", "cpu", or "cuda"
+
+
+@dataclass
 class WebConfig:
     host: str = "127.0.0.1"
     port: int = 8080
@@ -96,6 +105,7 @@ class CallenConfig:
     recording: RecordingConfig = field(default_factory=RecordingConfig)
     voicemail: VoicemailConfig = field(default_factory=VoicemailConfig)
     transcription: TranscriptionConfig = field(default_factory=TranscriptionConfig)
+    tts: TTSConfig = field(default_factory=TTSConfig)
     web: WebConfig = field(default_factory=WebConfig)
     email: EmailConfig = field(default_factory=EmailConfig)
     general: GeneralConfig = field(default_factory=GeneralConfig)
@@ -128,6 +138,7 @@ def load_config(path: str = "config.toml") -> CallenConfig:
         "recording": cfg.recording,
         "voicemail": cfg.voicemail,
         "transcription": cfg.transcription,
+        "tts": cfg.tts,
         "web": cfg.web,
         "email": cfg.email,
         "general": cfg.general,

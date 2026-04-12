@@ -127,6 +127,14 @@ def main(config_path: str = "config.toml"):
     event_bus.subscribe("call.incoming", on_call_incoming)
     event_bus.subscribe("call.ended", on_call_ended)
 
+    # TTS engine — warmed up at startup so the first SAY is fast
+    try:
+        from callen.tts import get_tts_engine
+        tts_engine = get_tts_engine(config.tts)
+        log.info("TTS engine ready: %s", tts_engine.name)
+    except Exception:
+        log.exception("TTS engine failed to load — calls will have no audio")
+
     # Transcription manager (loads Parakeet model)
     transcription_mgr = None
     if config.transcription.enabled:

@@ -29,6 +29,15 @@ model = "nvidia/parakeet-tdt-0.6b-v2"
 device = "auto"  # "auto", "cuda:0", "cpu"
 chunk_seconds = 3.0
 
+[tts]
+# Text-to-speech engine used for IVR prompts.
+# "kokoro" (default) — neural, high quality, loads ~82M params on startup
+# "espeak"           — fast, low quality, no model required
+engine = "kokoro"
+voice = "af_heart"   # kokoro: voice id; espeak: voice name
+lang_code = "a"      # kokoro lang: 'a' = American English, 'b' = British
+device = ""          # "", "cpu", or "cuda"
+
 [web]
 host = "127.0.0.1"
 port = 8080

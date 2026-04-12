@@ -9,6 +9,9 @@ torch>=2.1.0
 soundfile>=0.13.1
 webrtcvad-wheels>=2.0.14
 
+# TTS — Kokoro neural TTS (kept loaded for instant synthesis)
+kokoro>=0.9.4
+
 # Audio processing
 numpy<2.0
 resampy>=0.4.3
