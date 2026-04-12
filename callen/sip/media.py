@@ -77,7 +77,13 @@ class PromptPlayer:
 
 
 class CallRecorder:
-    """Records one audio channel to WAV via AudioMediaRecorder."""
+    """Records one audio channel to WAV via AudioMediaRecorder.
+
+    pjsua2's AudioMediaRecorder only flushes the WAV header and final
+    buffer when the underlying C++ object is destroyed. stopTransmit()
+    alone leaves the file header incomplete, so we drop the Python
+    reference in stop() to trigger pjsua2's destructor (via SWIG).
+    """
 
     def __init__(self, file_path: str):
         self._path = file_path
@@ -99,6 +105,15 @@ class CallRecorder:
             except Exception:
                 pass
             self._source = None
+        # Release the underlying pjsua2 recorder so the WAV is finalized.
+        # Without this the file header is incomplete until GC runs,
+        # which can take indefinitely long and breaks post-transcription.
+        if self._recorder is not None:
+            try:
+                del self._recorder
+            except Exception:
+                pass
+            self._recorder = None
         log.info("Recording stopped: %s", self._path)
 
     @property

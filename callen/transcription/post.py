@@ -40,8 +40,8 @@ MIN_UTTERANCE_MS = 500
 MAX_UTTERANCE_SECONDS = 15.0
 
 
-def _load_wav(path: str) -> tuple[np.ndarray, int]:
-    """Return (samples_int16, sample_rate). Prefers soundfile, falls back to wave."""
+def _load_wav_once(path: str) -> tuple[np.ndarray, int]:
+    """One attempt at loading a WAV. Raises or returns (samples, rate)."""
     if sf is not None:
         data, rate = sf.read(path, dtype="int16")
         if data.ndim > 1:
@@ -54,6 +54,28 @@ def _load_wav(path: str) -> tuple[np.ndarray, int]:
         if w.getnchannels() > 1:
             samples = samples.reshape(-1, w.getnchannels())[:, 0]
         return samples, rate
+
+
+def _load_wav(path: str, max_retries: int = 10, retry_delay: float = 0.3) -> tuple[np.ndarray, int]:
+    """Load a WAV with retries — pjsua2 finalizes the file header
+    asynchronously after recorder.stop(), so a fresh voicemail can look
+    empty for a fraction of a second before being fully readable."""
+    last_err = None
+    for attempt in range(max_retries):
+        try:
+            samples, rate = _load_wav_once(path)
+            if samples.size > 0:
+                return samples, rate
+            last_err = "zero samples"
+        except Exception as e:
+            last_err = f"{type(e).__name__}: {e}"
+
+        if attempt < max_retries - 1:
+            time.sleep(retry_delay)
+            log.debug("WAV load retry %d/%d for %s (%s)",
+                      attempt + 1, max_retries, path, last_err)
+
+    raise RuntimeError(f"Failed to load WAV after {max_retries} attempts: {last_err}")
 
 
 def _vad_segments(
