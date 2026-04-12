@@ -42,6 +42,47 @@ log = logging.getLogger(__name__)
 INCIDENT_ID_PATTERN = re.compile(r"\b(INC-\d{4,})\b")
 
 
+# Prompt-injection heuristics. Hits don't block anything automatically —
+# they move the email to 'flagged' status with a reason so the operator
+# can review and either mark-safe or reject.
+PROMPT_INJECTION_PATTERNS: list[tuple[re.Pattern, str]] = [
+    (re.compile(r"ignore\s+(?:all\s+)?(?:previous|prior|above)\s+(?:instructions?|prompts?|messages?)", re.I),
+     "ignore previous instructions"),
+    (re.compile(r"forget\s+(?:all|everything|your)\s+(?:instructions?|prompts?|rules?|prior)", re.I),
+     "forget instructions"),
+    (re.compile(r"disregard\s+(?:all|everything|previous|prior|above)", re.I),
+     "disregard previous"),
+    (re.compile(r"you\s+are\s+(?:now\s+)?(?:a|an)?\s*(?:DAN|jailbroken|unrestricted|uncensored)", re.I),
+     "DAN/jailbreak persona"),
+    (re.compile(r"(?:system|developer)\s+prompt", re.I),
+     "system prompt reference"),
+    (re.compile(r"override\b.{0,20}\b(instructions?|rules?|prompt|safety)\b", re.I),
+     "override instructions"),
+    (re.compile(r"(?:^|\n)\s*new\s+instructions?\s*:", re.I),
+     "new instructions marker"),
+    (re.compile(r"prompt\s+injection", re.I),
+     "literal prompt injection reference"),
+    (re.compile(r"<\|im_start\|>|<\|endoftext\|>|<\|system\|>", re.I),
+     "model special tokens"),
+    (re.compile(r"reveal\s+(?:your|the)\s+(?:prompt|instructions|system)", re.I),
+     "reveal prompt"),
+    (re.compile(r"execute\s+(?:the\s+)?following\s+(?:command|code|script)", re.I),
+     "execute following code"),
+    (re.compile(r"curl\s+[^\s]+\s*\|\s*(?:bash|sh)", re.I),
+     "curl pipe shell"),
+]
+
+
+def _scan_prompt_injection(text: str) -> tuple[bool, str]:
+    """Check body text against injection patterns. Returns (matched, reason)."""
+    if not text:
+        return False, ""
+    for pattern, label in PROMPT_INJECTION_PATTERNS:
+        if pattern.search(text):
+            return True, label
+    return False, ""
+
+
 class _HTMLStripper(html.parser.HTMLParser):
     """Minimal HTML-to-text for messages with no text/plain part."""
     def __init__(self):
@@ -181,6 +222,11 @@ def process_message(
     text_body, html_body = _extract_bodies(msg)
     is_bulk = _looks_like_bulk(msg)
 
+    # Scan for prompt-injection patterns in the body. Matches are
+    # non-blocking; they just tag the email as 'flagged' so the operator
+    # sees it separately from the normal triage queue.
+    injection_hit, injection_reason = _scan_prompt_injection(text_body)
+
     # Upsert the contact — harmless even for marketing senders because
     # a contact alone doesn't imply a ticket.
     contact_id = db.upsert_contact_by_email(from_addr, display_name=display_name)
@@ -214,7 +260,30 @@ def process_message(
 
     is_reply = incident_id is not None
 
-    # Store the email row (incident_id is NULL if pending triage)
+    # --- Decide the email's initial status ---
+    # Precedence (security-first):
+    #   1. is_reply wins      -> 'attached' (already going to an incident)
+    #   2. injection hit wins -> 'flagged' (even on marketing senders, so we
+    #                             see injection attacks regardless of channel)
+    #   3. bulk/marketing     -> 'rejected' with reason 'auto_bulk'
+    #   4. otherwise          -> 'pending' (agent triage queue)
+    if is_reply:
+        status = "attached"
+        status_reason = f"auto_routed:{routing_rule}"
+    elif injection_hit:
+        status = "flagged"
+        reason_parts = [f"prompt_injection:{injection_reason}"]
+        if is_bulk:
+            reason_parts.append("bulk_sender")
+        status_reason = " ".join(reason_parts)
+    elif is_bulk:
+        status = "rejected"
+        status_reason = "auto_bulk"
+    else:
+        status = "pending"
+        status_reason = ""
+
+    # Store the email row
     record = EmailRecord(
         message_id=message_id,
         incident_id=incident_id,
@@ -227,16 +296,19 @@ def process_message(
         received_at=time.time(),
         in_reply_to=in_reply_to,
     )
-    email_id = db.save_email(record)
+    email_id = db.save_email(record, status=status, status_reason=status_reason)
 
     result = {
         "status": "stored",
+        "email_status": status,
+        "email_status_reason": status_reason,
         "message_id": message_id,
         "email_id": email_id,
         "contact_id": contact_id,
         "incident_id": incident_id,
         "is_reply": is_reply,
         "is_bulk": is_bulk,
+        "injection_hit": injection_hit,
         "routing_rule": routing_rule,
     }
 
@@ -256,6 +328,16 @@ def process_message(
         )
         log.info("Threaded reply from %s -> %s (via %s)",
                  from_addr, incident_id, routing_rule)
+    elif status == "flagged":
+        log.warning(
+            "FLAGGED email from %s: %s (subject: %s)",
+            from_addr, status_reason, subject[:60],
+        )
+    elif status == "rejected":
+        log.info(
+            "Auto-rejected email from %s: %s",
+            from_addr, status_reason,
+        )
     else:
         log.info(
             "Pending email from %s (%s%s): %s",

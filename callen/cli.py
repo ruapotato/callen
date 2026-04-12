@@ -539,19 +539,55 @@ def cmd_search(args):
 # --- Emails (triage queue + agent-sent replies) ---
 
 
-def cmd_list_pending_emails(args):
-    db = _db(args)
-    rows = db.list_pending_emails(limit=args.limit)
-    if args.pretty:
+def _render_email_list(rows: list[dict], pretty: bool, empty_label: str = "(empty)"):
+    if pretty:
         if not rows:
-            print("(no pending emails)")
+            print(empty_label)
             return
         for r in rows:
             when = time.strftime('%Y-%m-%d %H:%M', time.localtime(r['received_at']))
-            subj = r['subject'][:60] if r['subject'] else '(no subject)'
-            print(f"  {r['id']:4d}  {when}  {r['from_addr']:<30s}  {subj}")
+            subj = r['subject'][:55] if r['subject'] else '(no subject)'
+            reason = f"  [{r['status_reason']}]" if r.get('status_reason') else ''
+            print(f"  {r['id']:4d}  {when}  {r['from_addr']:<30s}  {subj}{reason}")
         return
     _out(rows)
+
+
+def cmd_list_pending_emails(args):
+    db = _db(args)
+    rows = db.list_pending_emails(limit=args.limit)
+    _render_email_list(rows, args.pretty, "(no pending emails)")
+
+
+def cmd_list_flagged_emails(args):
+    db = _db(args)
+    rows = db.list_emails_by_status("flagged", limit=args.limit)
+    _render_email_list(rows, args.pretty, "(no flagged emails)")
+
+
+def cmd_list_rejected_emails(args):
+    db = _db(args)
+    rows = db.list_emails_by_status("rejected", limit=args.limit)
+    _render_email_list(rows, args.pretty, "(no rejected emails)")
+
+
+def cmd_mark_safe(args):
+    """Move a flagged or rejected email back to the pending queue."""
+    db = _db(args)
+    em = db.get_email(args.email_id)
+    if not em:
+        _err(f"email not found: {args.email_id}")
+    if em.get("incident_id"):
+        _err(f"email is already attached to {em['incident_id']}")
+    ok = db.set_email_status(args.email_id, "pending", "marked_safe_by_agent")
+    if not ok:
+        _err("failed to update email status")
+    _out({
+        "email_id": args.email_id,
+        "status": "pending",
+        "previous_status": em.get("status"),
+        "previous_reason": em.get("status_reason"),
+    })
 
 
 def cmd_get_email(args):
@@ -625,10 +661,12 @@ def cmd_assign_email(args):
 
 
 def cmd_reject_email(args):
-    """Discard a pending email — e.g. marketing, spam, not a support request.
+    """Soft-reject a pending or flagged email.
 
-    By default the email row is deleted. Use --keep to just mark it rejected
-    without deleting (not yet implemented — deletes for now).
+    By default the email row is KEPT in the database with status='rejected'
+    so you have an audit trail. Pass --hard-delete to actually remove the
+    row (use sparingly — rejection history is useful for debugging the
+    auto-filters).
     """
     db = _db(args)
     em = db.get_email(args.email_id)
@@ -637,13 +675,25 @@ def cmd_reject_email(args):
     if em.get("incident_id"):
         _err(f"email is already attached to {em['incident_id']} — cannot reject")
 
-    ok = db.delete_email(args.email_id)
+    if args.hard_delete:
+        ok = db.delete_email(args.email_id)
+        if not ok:
+            _err("failed to delete email")
+        _out({
+            "email_id": args.email_id,
+            "status": "deleted",
+            "reason": args.reason or "",
+        })
+        return
+
+    reason = args.reason or "manual_reject"
+    ok = db.set_email_status(args.email_id, "rejected", reason)
     if not ok:
-        _err("failed to delete email")
+        _err("failed to reject email")
     _out({
         "email_id": args.email_id,
         "status": "rejected",
-        "reason": args.reason or "",
+        "reason": reason,
     })
 
 
@@ -968,10 +1018,23 @@ def build_parser() -> argparse.ArgumentParser:
     pp.add_argument("--status", choices=["open", "in_progress", "waiting", "resolved", "closed"])
     pp.set_defaults(func=cmd_assign_email)
 
-    pp = sub.add_parser("reject-email", help="Delete a pending email (marketing, spam, off-topic)")
+    pp = sub.add_parser("reject-email", help="Mark an email as rejected (soft-delete, kept for audit)")
     pp.add_argument("email_id", type=int)
-    pp.add_argument("--reason", help="why it was rejected (for logs only)")
+    pp.add_argument("--reason", help="why it was rejected")
+    pp.add_argument("--hard-delete", action="store_true", help="actually remove the row instead of marking")
     pp.set_defaults(func=cmd_reject_email)
+
+    pp = sub.add_parser("list-flagged-emails", help="Emails flagged for security review (e.g. possible prompt injection)")
+    pp.add_argument("--limit", type=int, default=100)
+    pp.set_defaults(func=cmd_list_flagged_emails)
+
+    pp = sub.add_parser("list-rejected-emails", help="Emails previously rejected (auto_bulk or manual)")
+    pp.add_argument("--limit", type=int, default=100)
+    pp.set_defaults(func=cmd_list_rejected_emails)
+
+    pp = sub.add_parser("mark-safe", help="Move a flagged or rejected email back to the pending queue")
+    pp.add_argument("email_id", type=int)
+    pp.set_defaults(func=cmd_mark_safe)
 
     pp = sub.add_parser("send-email", help="Send an outbound email on an incident")
     pp.add_argument("incident_id")

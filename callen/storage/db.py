@@ -18,7 +18,7 @@ from callen.storage.models import (
 
 log = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 2
+CURRENT_SCHEMA_VERSION = 3
 
 # --- Schema ---
 
@@ -146,8 +146,12 @@ CREATE TABLE IF NOT EXISTS emails (
     body_text TEXT DEFAULT '',
     body_html TEXT DEFAULT '',
     received_at REAL NOT NULL DEFAULT (unixepoch('subsec')),
-    in_reply_to TEXT DEFAULT ''
+    in_reply_to TEXT DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'pending',
+    status_reason TEXT DEFAULT ''
 );
+
+CREATE INDEX IF NOT EXISTS idx_emails_status ON emails(status);
 
 CREATE INDEX IF NOT EXISTS idx_emails_incident ON emails(incident_id);
 
@@ -211,6 +215,9 @@ class Database:
 
         if version < 2:
             self._migrate_to_v2()
+
+        if self._current_version() < 3:
+            self._migrate_to_v3()
 
         log.info("Database ready (schema v%d): %s", self._current_version(), self._path)
 
@@ -277,6 +284,24 @@ class Database:
         conn.execute("INSERT OR IGNORE INTO schema_version VALUES (2)")
         conn.commit()
         log.info("Migration v1 -> v2 complete (%d calls migrated)", len(existing))
+
+    def _migrate_to_v3(self):
+        """Add email status + status_reason columns for the triage workflow."""
+        log.info("Migrating database schema v2 -> v3 (email status tracking)")
+        conn = self._conn()
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(emails)").fetchall()}
+        if "status" not in cols:
+            conn.execute("ALTER TABLE emails ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'")
+        if "status_reason" not in cols:
+            conn.execute("ALTER TABLE emails ADD COLUMN status_reason TEXT DEFAULT ''")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_emails_status ON emails(status)")
+        # Backfill: any existing email with an incident is 'attached'
+        conn.execute(
+            "UPDATE emails SET status = 'attached' WHERE incident_id IS NOT NULL"
+        )
+        conn.execute("INSERT OR IGNORE INTO schema_version VALUES (3)")
+        conn.commit()
+        log.info("Migration v2 -> v3 complete")
 
     # --- ID generation ---
 
@@ -748,19 +773,25 @@ class Database:
 
     # --- Emails ---
 
-    def save_email(self, msg: EmailMessage) -> int:
+    def save_email(self, msg: EmailMessage, status: str = None,
+                   status_reason: str = "") -> int:
         conn = self._conn()
+        # Default the status based on whether the email is already attached
+        if status is None:
+            status = "attached" if msg.incident_id else "pending"
         cur = conn.execute(
             """INSERT INTO emails
                (message_id, incident_id, direction, from_addr, to_addr,
-                subject, body_text, body_html, received_at, in_reply_to)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                subject, body_text, body_html, received_at, in_reply_to,
+                status, status_reason)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 msg.message_id, msg.incident_id, msg.direction,
                 msg.from_addr, msg.to_addr, msg.subject,
                 msg.body_text, msg.body_html,
                 msg.received_at or time.time(),
                 msg.in_reply_to,
+                status, status_reason,
             ),
         )
         conn.commit()
@@ -785,19 +816,33 @@ class Database:
         ).fetchone()
         return row["incident_id"] if row else None
 
-    def list_pending_emails(self, limit: int = 100) -> list[dict]:
-        """Inbound emails that have not been routed to an incident yet."""
+    def list_emails_by_status(self, status: str, limit: int = 100) -> list[dict]:
+        """Emails in a given status. Status values: pending, flagged, rejected, attached."""
         rows = self._conn().execute(
             """SELECT id, message_id, from_addr, to_addr, subject,
                       substr(body_text, 1, 200) AS preview,
-                      received_at, in_reply_to
+                      received_at, in_reply_to, status, status_reason,
+                      incident_id
                FROM emails
-               WHERE direction = 'in' AND incident_id IS NULL
+               WHERE direction = 'in' AND status = ?
                ORDER BY received_at DESC
                LIMIT ?""",
-            (limit,),
+            (status, limit),
         ).fetchall()
         return [dict(r) for r in rows]
+
+    def list_pending_emails(self, limit: int = 100) -> list[dict]:
+        """Inbound emails waiting for agent triage (status='pending')."""
+        return self.list_emails_by_status("pending", limit)
+
+    def set_email_status(self, email_id: int, status: str, reason: str = "") -> bool:
+        conn = self._conn()
+        cur = conn.execute(
+            "UPDATE emails SET status = ?, status_reason = ? WHERE id = ?",
+            (status, reason, email_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
 
     def list_emails_for_incident(self, incident_id: str) -> list[dict]:
         rows = self._conn().execute(
@@ -810,7 +855,9 @@ class Database:
     def attach_email_to_incident(self, email_id: int, incident_id: str) -> bool:
         conn = self._conn()
         cur = conn.execute(
-            "UPDATE emails SET incident_id = ? WHERE id = ? AND incident_id IS NULL",
+            """UPDATE emails
+               SET incident_id = ?, status = 'attached', status_reason = ''
+               WHERE id = ? AND incident_id IS NULL""",
             (incident_id, email_id),
         )
         conn.commit()
