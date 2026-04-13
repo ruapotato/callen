@@ -27,6 +27,9 @@ voicemail/*.wav
 # Voicemail recordings
 voicemail/
 
+# Email attachments (OCR'd but raw files stored here)
+attachments/
+
 # IDE
 .vscode/
 .idea/
