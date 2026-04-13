@@ -53,6 +53,13 @@ def _db(args) -> Database:
     return db
 
 
+def _db_and_config(args):
+    config = load_config(args.config)
+    db = Database(config.general.db_path)
+    db.initialize()
+    return db, config
+
+
 def _human_incident(inc: dict) -> str:
     return (
         f"{inc['id']}  [{inc['status']}/{inc['priority']}]  "
@@ -135,6 +142,14 @@ def cmd_note_incident(args):
         payload={"text": text},
     )
     _out({"entry_id": entry_id, "incident_id": args.incident_id})
+
+
+def cmd_delete_incident(args):
+    db = _db(args)
+    ok = db.delete_incident(args.incident_id)
+    if not ok:
+        _err(f"incident {args.incident_id} not found")
+    _out({"deleted": args.incident_id}, pretty=args.pretty)
 
 
 def cmd_create_incident(args):
@@ -544,7 +559,7 @@ def cmd_search(args):
 def cmd_block_sender(args):
     """Quarantine a sender so future inbound email/calls are rejected
     at the front door — no OCR, no preflight, no agent exposure."""
-    db = _db(args)
+    db, config = _db_and_config(args)
     reason = args.reason or "manual"
     blocked_any = False
     result: dict = {"blocked": [], "reason": reason}
@@ -554,6 +569,27 @@ def cmd_block_sender(args):
         if ok:
             result["blocked"].append({"type": "email", "address": args.email})
             blocked_any = True
+            # Also flip the owning contact to 'suspect' and send the
+            # lockout notice so the sender learns they're blocked and
+            # how to reach a human to appeal.
+            try:
+                contact_id = db.upsert_contact_by_email(args.email)
+                if contact_id:
+                    db.set_contact_trust(contact_id, "suspect")
+            except Exception:
+                log.exception("Failed to flip contact suspect for %s", args.email)
+            try:
+                from callen.notify.email import send_lockout_notice
+                mid = send_lockout_notice(
+                    config.email, args.email,
+                    config.operator.support_phone,
+                )
+                if mid:
+                    result.setdefault("notices", []).append(
+                        {"to": args.email, "message_id": mid}
+                    )
+            except Exception:
+                log.exception("Failed to send lockout notice to %s", args.email)
     if args.phone:
         from callen.storage.db import normalize_phone
         e164 = normalize_phone(args.phone) or args.phone
@@ -1072,6 +1108,10 @@ def build_parser() -> argparse.ArgumentParser:
     pp.add_argument("--status", default="open")
     pp.add_argument("--priority", default="normal")
     pp.set_defaults(func=cmd_create_incident)
+
+    pp = sub.add_parser("delete-incident", help="Hard-delete an incident (calls/emails detached, not deleted)")
+    pp.add_argument("incident_id")
+    pp.set_defaults(func=cmd_delete_incident)
 
     # contact
     pp = sub.add_parser("list-contacts", help="List contacts")

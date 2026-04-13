@@ -39,6 +39,7 @@ from callen.notify.attachments import (
     extract_attachments,
     append_extracted_text_to_body,
 )
+from callen.notify.email import send_lockout_notice, LOCKOUT_SUBJECT
 
 log = logging.getLogger(__name__)
 
@@ -189,11 +190,76 @@ def _looks_like_bulk(msg: email.message.Message) -> bool:
     return False
 
 
+def apply_injection_response(
+    db,
+    config: EmailConfig,
+    *,
+    email_id: int,
+    from_addr: str,
+    contact_id: str | None,
+    injection_reason: str,
+    support_phone: str = "",
+    source: str = "scanner",
+) -> None:
+    """Side effects for an email classified as prompt injection.
+
+    Shared by the deterministic regex scanner and the downstream Mistral
+    preflight classifier so both layers apply the same response:
+      - create a security warning ticket (sender-only, no body)
+      - mark the contact 'suspect'
+      - hard-block the sender email
+      - send the lockout notice
+    """
+    try:
+        warn_id = db.create_incident(
+            contact_id=contact_id,
+            subject=f"Security: prompt-injection attempt from {from_addr}",
+            channel="email",
+            status="open",
+            priority="high",
+        )
+        db.update_incident(warn_id, add_labels=["security", "injection"])
+        db.add_incident_entry(
+            warn_id, "note", author="system",
+            payload={
+                "text": (
+                    f"Automated security alert. An inbound email from "
+                    f"{from_addr} tripped the {source} "
+                    f"({injection_reason}). The email body is NOT "
+                    f"reproduced here — see email id {email_id} in the "
+                    f"flagged queue if review is needed."
+                ),
+            },
+        )
+    except Exception:
+        log.exception("Failed to create security warning ticket for %s", from_addr)
+
+    if contact_id:
+        try:
+            db.set_contact_trust(contact_id, "suspect")
+        except Exception:
+            log.exception("Failed to mark contact %s as suspect", contact_id)
+
+    try:
+        db.block_email(
+            from_addr,
+            reason=f"auto: {source} ({injection_reason})",
+        )
+    except Exception:
+        log.exception("Failed to auto-block sender %s", from_addr)
+
+    try:
+        send_lockout_notice(config, from_addr, support_phone)
+    except Exception:
+        log.exception("Failed to send lockout notice to %s", from_addr)
+
+
 def process_message(
     raw_bytes: bytes,
     config: EmailConfig,
     db,
     event_bus=None,
+    support_phone: str = "",
 ) -> dict | None:
     """Process a single raw email message.
 
@@ -232,6 +298,11 @@ def process_message(
         log.info("Skipping system message from %s", from_addr)
         return None
 
+    # Skip replies/bounces of our own lockout notice to avoid loops
+    if subject.startswith(LOCKOUT_SUBJECT.split("]", 1)[0]) and LOCKOUT_SUBJECT in subject:
+        log.info("Skipping bounce of our lockout notice from %s", from_addr)
+        return None
+
     # --- Hard block check ---
     # If this sender's email address is on the blocked list, we do NOT
     # extract attachments, run OCR, call the preflight LLM, or touch the
@@ -264,6 +335,15 @@ def process_message(
             )
         except Exception:
             log.exception("Failed to persist blocked-sender stub row")
+        # Auto-reply with the lockout notice so the sender knows how to
+        # reach a human. This runs on every blocked message so a false
+        # positive gets a consistent path back in.
+        try:
+            send_lockout_notice(
+                config, from_addr, support_phone, in_reply_to=message_id,
+            )
+        except Exception:
+            log.exception("Failed to send lockout notice to %s", from_addr)
         return {
             "status": "blocked_sender",
             "from": from_addr,
@@ -422,6 +502,15 @@ def process_message(
         log.warning(
             "FLAGGED email from %s: %s (subject: %s)",
             from_addr, status_reason, subject[:60],
+        )
+        apply_injection_response(
+            db, config,
+            email_id=email_id,
+            from_addr=from_addr,
+            contact_id=contact_id,
+            injection_reason=injection_reason,
+            support_phone=support_phone,
+            source="regex scanner",
         )
     elif status == "rejected":
         log.info(

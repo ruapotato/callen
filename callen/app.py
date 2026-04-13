@@ -137,6 +137,21 @@ def main(config_path: str = "config.toml"):
                     db.record_phone_consent(call.normalized_phone, source="ivr")
                 except Exception:
                     log.exception("Failed to record phone consent")
+            # If the call was successfully bridged (operator answered and
+            # spoke with the caller), auto-close the incident. The operator
+            # handled it live, so it shouldn't sit in the open-ticket queue.
+            # The incident row remains for call history / transcript access.
+            incident_id = getattr(call, "incident_id", None)
+            was_bridged = (call.state == CallState.BRIDGED) or getattr(call, "was_bridged", False)
+            if incident_id and was_bridged:
+                try:
+                    db.update_incident(incident_id, status="closed")
+                    db.add_incident_entry(
+                        incident_id, "note", author="system",
+                        payload={"text": "Auto-closed: call answered live by operator."},
+                    )
+                except Exception:
+                    log.exception("Failed to auto-close incident %s", incident_id)
 
     event_bus.subscribe("call.incoming", on_call_incoming)
     event_bus.subscribe("call.ended", on_call_ended)
@@ -232,7 +247,10 @@ def main(config_path: str = "config.toml"):
     if config.email.imap_enabled:
         try:
             from callen.notify.imap_poller import IMAPPoller
-            imap_poller = IMAPPoller(config.email, db, event_bus)
+            imap_poller = IMAPPoller(
+                config.email, db, event_bus,
+                support_phone=config.operator.support_phone,
+            )
             imap_poller.start()
         except Exception:
             log.exception("Failed to start IMAP poller")
@@ -424,6 +442,26 @@ def main(config_path: str = "config.toml"):
                             em["incident_id"], "note", author="preflight",
                             payload={"text": f"Email {email_id} flagged by preflight: {reason}"},
                         )
+                    # Same response as the regex scanner: create a
+                    # warning ticket, mark contact suspect, hard-block
+                    # the sender, and send the lockout notice.
+                    from callen.notify.email_processor import apply_injection_response
+                    from_addr_flag = em.get("from_addr", "")
+                    contact_for_flag = None
+                    try:
+                        if from_addr_flag:
+                            contact_for_flag = db.upsert_contact_by_email(from_addr_flag)
+                    except Exception:
+                        pass
+                    apply_injection_response(
+                        db, config.email,
+                        email_id=email_id,
+                        from_addr=from_addr_flag,
+                        contact_id=contact_for_flag,
+                        injection_reason=reason,
+                        support_phone=config.operator.support_phone,
+                        source="preflight classifier",
+                    )
                     return  # Claude agent never sees it
 
                 if verdict == "reject":

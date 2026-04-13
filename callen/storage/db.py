@@ -18,7 +18,7 @@ from callen.storage.models import (
 
 log = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 6
+CURRENT_SCHEMA_VERSION = 7
 
 # --- Schema ---
 
@@ -228,6 +228,9 @@ class Database:
         if self._current_version() < 6:
             self._migrate_to_v6()
 
+        if self._current_version() < 7:
+            self._migrate_to_v7()
+
         log.info("Database ready (schema v%d): %s", self._current_version(), self._path)
 
     def _current_version(self) -> int:
@@ -293,6 +296,23 @@ class Database:
         conn.execute("INSERT OR IGNORE INTO schema_version VALUES (2)")
         conn.commit()
         log.info("Migration v1 -> v2 complete (%d calls migrated)", len(existing))
+
+    def _migrate_to_v7(self):
+        """Add trust_level to contacts: 'unverified' (default), 'verified',
+        or 'suspect'. Set automatically to 'suspect' when an inbound
+        email from a known contact trips the injection scanner."""
+        log.info("Migrating database schema v6 -> v7 (contact trust level)")
+        conn = self._conn()
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(contacts)").fetchall()}
+        if "trust_level" not in cols:
+            conn.execute(
+                "ALTER TABLE contacts ADD COLUMN trust_level TEXT NOT NULL DEFAULT 'unverified'"
+            )
+        if "trust_updated_at" not in cols:
+            conn.execute("ALTER TABLE contacts ADD COLUMN trust_updated_at REAL")
+        conn.execute("INSERT OR IGNORE INTO schema_version VALUES (7)")
+        conn.commit()
+        log.info("Migration v6 -> v7 complete")
 
     def _migrate_to_v6(self):
         """Add blocked_at / blocked_reason columns to contact_phones and
@@ -521,6 +541,34 @@ class Database:
         )
         self._conn().commit()
 
+    def revoke_phone_consent(self, e164: str) -> bool:
+        conn = self._conn()
+        cur = conn.execute(
+            "UPDATE contact_phones SET consented_at = NULL, consent_source = NULL WHERE e164 = ?",
+            (e164,),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+    def record_email_consent(self, address: str, source: str = "manual"):
+        self._conn().execute(
+            """UPDATE contact_emails
+               SET consented_at = COALESCE(consented_at, unixepoch('subsec')),
+                   consent_source = COALESCE(consent_source, ?)
+               WHERE address = ?""",
+            (source, address.lower()),
+        )
+        self._conn().commit()
+
+    def revoke_email_consent(self, address: str) -> bool:
+        conn = self._conn()
+        cur = conn.execute(
+            "UPDATE contact_emails SET consented_at = NULL, consent_source = NULL WHERE address = ?",
+            (address.lower(),),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
     def phone_has_consent(self, e164: str) -> bool:
         row = self._conn().execute(
             "SELECT consented_at FROM contact_phones WHERE e164 = ?", (e164,)
@@ -617,13 +665,17 @@ class Database:
         c = dict(row)
         c["phones"] = [
             dict(r) for r in conn.execute(
-                "SELECT e164, consented_at, consent_source FROM contact_phones WHERE contact_id = ?",
+                """SELECT e164, consented_at, consent_source,
+                          blocked_at, blocked_reason
+                   FROM contact_phones WHERE contact_id = ?""",
                 (contact_id,),
             ).fetchall()
         ]
         c["emails"] = [
             dict(r) for r in conn.execute(
-                "SELECT address, consented_at, consent_source FROM contact_emails WHERE contact_id = ?",
+                """SELECT address, consented_at, consent_source,
+                          blocked_at, blocked_reason
+                   FROM contact_emails WHERE contact_id = ?""",
                 (contact_id,),
             ).fetchall()
         ]
@@ -657,6 +709,18 @@ class Database:
             f"UPDATE contacts SET {', '.join(sets)} WHERE id = ?", args,
         )
         self._conn().commit()
+
+    def set_contact_trust(self, contact_id: str, trust_level: str) -> bool:
+        """Set a contact's trust_level. Valid values: unverified, verified, suspect."""
+        if trust_level not in ("unverified", "verified", "suspect"):
+            return False
+        conn = self._conn()
+        cur = conn.execute(
+            "UPDATE contacts SET trust_level = ?, trust_updated_at = ? WHERE id = ?",
+            (trust_level, time.time(), contact_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
 
     # --- Incidents ---
 
@@ -789,6 +853,23 @@ class Database:
         conn.execute(
             f"UPDATE incidents SET {', '.join(sets)} WHERE id = ?", args,
         )
+        conn.commit()
+        return True
+
+    def delete_incident(self, incident_id: str) -> bool:
+        """Hard-delete an incident and its entries/todos. Linked calls
+        and emails are detached (incident_id set to NULL) so the audit
+        trail isn't destroyed."""
+        conn = self._conn()
+        if not conn.execute(
+            "SELECT 1 FROM incidents WHERE id = ?", (incident_id,)
+        ).fetchone():
+            return False
+        conn.execute("DELETE FROM incident_entries WHERE incident_id = ?", (incident_id,))
+        conn.execute("DELETE FROM incident_todos WHERE incident_id = ?", (incident_id,))
+        conn.execute("UPDATE calls SET incident_id = NULL WHERE incident_id = ?", (incident_id,))
+        conn.execute("UPDATE emails SET incident_id = NULL WHERE incident_id = ?", (incident_id,))
+        conn.execute("DELETE FROM incidents WHERE id = ?", (incident_id,))
         conn.commit()
         return True
 

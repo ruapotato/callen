@@ -23,10 +23,11 @@ log = logging.getLogger(__name__)
 
 
 class IMAPPoller:
-    def __init__(self, config: EmailConfig, db, event_bus=None):
+    def __init__(self, config: EmailConfig, db, event_bus=None, support_phone: str = ""):
         self._config = config
         self._db = db
         self._event_bus = event_bus
+        self._support_phone = support_phone
         self._running = False
         self._thread: threading.Thread | None = None
         self._conn: imaplib.IMAP4 | None = None
@@ -133,6 +134,7 @@ class IMAPPoller:
 
                 result = process_message(
                     raw_bytes, self._config, self._db, self._event_bus,
+                    support_phone=self._support_phone,
                 )
                 if result:
                     log.debug("Processed UID %s: %s", uid.decode(), result)

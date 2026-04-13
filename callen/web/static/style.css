@@ -978,6 +978,79 @@ body {
 
 .hidden { display: none !important; }
 
+/* Contact trust badges */
+.trust-badge {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-weight: 600;
+    margin-left: 8px;
+}
+.trust-unverified { background: var(--bg-elev2); color: var(--text-dim); }
+.trust-verified { background: #0f3d1f; color: var(--green); }
+.trust-suspect { background: #3d0f11; color: var(--red); border: 1px solid var(--red); }
+
+/* Contact channel cards */
+.contact-channels {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 16px;
+}
+.channel-card {
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.channel-card.is-blocked {
+    border-color: var(--red);
+    background: #2a1416;
+}
+.channel-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--mono);
+}
+.channel-kind { font-size: 14px; }
+.channel-value { color: var(--text); font-size: 13px; }
+.channel-badges {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+.channel-badges .badge {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-weight: 500;
+}
+.badge.consent-yes { background: #0f3d1f; color: var(--green); }
+.badge.consent-no { background: var(--bg-elev2); color: var(--text-dim); }
+.badge.blocked-yes { background: #3d0f11; color: var(--red); }
+.channel-meta { font-size: 11px; color: var(--text-faint); }
+.channel-actions {
+    display: flex;
+    gap: 6px;
+}
+.channel-actions button {
+    background: var(--bg-elev2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    padding: 4px 10px;
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    cursor: pointer;
+}
+.channel-actions button:hover { background: var(--bg-elev3); }
+.channel-actions button.danger { color: var(--red); border-color: #5a2428; }
+.channel-actions button.danger:hover { background: #2a1416; }
+
 /* Scrollbars */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: var(--bg); }

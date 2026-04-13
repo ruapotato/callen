@@ -772,9 +772,11 @@ async function selectContact(contactId) {
         const c = await api(`/contacts/${contactId}`);
         const header = $('detail-header');
         clear(header);
+        const trust = c.trust_level || 'unverified';
         header.appendChild(el('div', { class: 'detail-title' }, [
             el('span', {}, c.display_name || '(unnamed)'),
             el('span', { class: 'detail-id' }, c.id),
+            el('span', { class: `trust-badge trust-${trust}` }, trustLabel(trust)),
         ]));
         const phones = c.phones || [];
         const emails = c.emails || [];
@@ -802,9 +804,38 @@ async function selectContact(contactId) {
         actions.appendChild(el('button', {
             onclick: () => editContactNamePrompt(c),
         }, '✎ Rename'));
+        if (trust !== 'verified') {
+            actions.appendChild(el('button', {
+                onclick: () => setContactTrust(c.id, 'verified'),
+            }, '✓ Mark verified'));
+        }
+        if (trust !== 'suspect') {
+            actions.appendChild(el('button', {
+                class: 'danger',
+                onclick: () => setContactTrust(c.id, 'suspect'),
+            }, '⚠ Flag suspect'));
+        }
+        if (trust !== 'unverified') {
+            actions.appendChild(el('button', {
+                onclick: () => setContactTrust(c.id, 'unverified'),
+            }, 'Reset trust'));
+        }
 
         const body = $('detail-body');
         clear(body);
+
+        // Phones and emails with consent/block state + actions
+        if (phones.length || emails.length) {
+            const channels = el('div', { class: 'contact-channels' });
+            for (const p of phones) {
+                channels.appendChild(renderChannelCard(c.id, 'phone', p.e164, p));
+            }
+            for (const em of emails) {
+                channels.appendChild(renderChannelCard(c.id, 'email', em.address, em));
+            }
+            body.appendChild(channels);
+        }
+
         const list = el('div', { class: 'timeline' });
         if ((c.incidents || []).length === 0) {
             list.appendChild(el('div', { class: 'empty-state' }, 'No tickets for this contact yet.'));
@@ -891,6 +922,90 @@ async function editContactNamePrompt(contact) {
             `Rename contact ${contact.id} to "${name.trim()}" using ./tools/update-contact ${contact.id} --name "${name.trim()}".`,
             { contact_id: contact.id },
         );
+    } catch (e) { alert(`Failed: ${e.message}`); }
+}
+
+// ============ Contact trust ============
+function trustLabel(level) {
+    if (level === 'verified') return '✓ verified';
+    if (level === 'suspect') return '⚠ suspect';
+    return '• unverified';
+}
+
+async function setContactTrust(contactId, level) {
+    if (level === 'suspect' && !confirm('Flag this contact as suspect?')) return;
+    try {
+        await api(`/contacts/${contactId}/trust`, {
+            method: 'POST',
+            body: JSON.stringify({ trust_level: level }),
+        });
+        selectContact(contactId);
+    } catch (e) { alert(`Failed: ${e.message}`); }
+}
+
+// ============ Contact channel cards (phones/emails) ============
+function renderChannelCard(contactId, kind, value, row) {
+    const consented = !!row.consented_at;
+    const blocked = !!row.blocked_at;
+    const badges = el('div', { class: 'channel-badges' }, [
+        el('span', {
+            class: consented ? 'badge consent-yes' : 'badge consent-no',
+        }, consented ? '✓ consented' : '— no consent'),
+        blocked ? el('span', { class: 'badge blocked-yes' }, `🛡 blocked`) : null,
+    ]);
+    if (consented && row.consent_source) {
+        badges.appendChild(el('span', { class: 'channel-meta' }, `src: ${row.consent_source}`));
+    }
+    if (blocked && row.blocked_reason) {
+        badges.appendChild(el('span', { class: 'channel-meta' }, row.blocked_reason));
+    }
+
+    const actions = el('div', { class: 'channel-actions' }, [
+        el('button', {
+            onclick: () => toggleConsent(contactId, kind, value, !consented),
+        }, consented ? 'Revoke consent' : 'Mark consented'),
+        el('button', {
+            class: blocked ? '' : 'danger',
+            onclick: () => toggleBlock(contactId, kind, value, !blocked),
+        }, blocked ? 'Unblock' : 'Block'),
+    ]);
+
+    return el('div', { class: 'channel-card' + (blocked ? ' is-blocked' : '') }, [
+        el('div', { class: 'channel-header' }, [
+            el('span', { class: 'channel-kind' }, kind === 'phone' ? '📞' : '✉'),
+            el('span', { class: 'channel-value' }, value),
+        ]),
+        badges,
+        actions,
+    ]);
+}
+
+async function toggleConsent(contactId, kind, value, consented) {
+    const source = consented ? (prompt('Consent source (e.g. "verbal on call", "email reply"):', 'manual') || 'manual') : 'manual';
+    try {
+        await api(`/contacts/${contactId}/consent`, {
+            method: 'POST',
+            body: JSON.stringify({ [kind]: value, consented, source }),
+        });
+        selectContact(contactId);
+    } catch (e) { alert(`Failed: ${e.message}`); }
+}
+
+async function toggleBlock(contactId, kind, value, blocked) {
+    let reason = 'manual';
+    if (blocked) {
+        const r = prompt(`Block ${value}? Reason:`, 'manual');
+        if (r == null) return;
+        reason = r || 'manual';
+    } else {
+        if (!confirm(`Unblock ${value}?`)) return;
+    }
+    try {
+        await api(`/contacts/${contactId}/block`, {
+            method: 'POST',
+            body: JSON.stringify({ [kind]: value, blocked, reason }),
+        });
+        selectContact(contactId);
     } catch (e) { alert(`Failed: ${e.message}`); }
 }
 

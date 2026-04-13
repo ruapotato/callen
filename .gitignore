@@ -23,6 +23,7 @@ voicemail/*.wav
 *.db
 *.db-shm
 *.db-wal
+backups/
 
 # Voicemail recordings
 voicemail/

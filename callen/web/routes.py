@@ -271,6 +271,92 @@ async def contact_detail(contact_id):
     return jsonify(c)
 
 
+@bp.route("/api/contacts/<contact_id>/consent", methods=["POST"])
+async def contact_consent(contact_id):
+    """Record or revoke consent on one of a contact's phones/emails.
+
+    Body: {"phone": "15551234567", "consented": true, "source": "manual"}
+       or {"email": "jane@example.com", "consented": false}
+    """
+    data = await request.get_json() or {}
+    db = _db()
+    if not db.get_contact(contact_id):
+        return jsonify({"error": "not found"}), 404
+
+    phone = (data.get("phone") or "").strip()
+    email = (data.get("email") or "").strip()
+    consented = bool(data.get("consented", True))
+    source = data.get("source") or "manual"
+
+    if phone:
+        from callen.storage.db import normalize_phone
+        e164 = normalize_phone(phone) or phone
+        if consented:
+            db.record_phone_consent(e164, source=source)
+        else:
+            db.revoke_phone_consent(e164)
+    elif email:
+        if consented:
+            db.record_email_consent(email, source=source)
+        else:
+            db.revoke_email_consent(email)
+    else:
+        return jsonify({"error": "phone or email required"}), 400
+
+    return jsonify(db.get_contact(contact_id))
+
+
+@bp.route("/api/contacts/<contact_id>/block", methods=["POST"])
+async def contact_block(contact_id):
+    """Block or unblock one of a contact's phones/emails.
+
+    Body: {"phone": "15551234567", "blocked": true, "reason": "..."}
+       or {"email": "jane@example.com", "blocked": false}
+    """
+    data = await request.get_json() or {}
+    db = _db()
+    if not db.get_contact(contact_id):
+        return jsonify({"error": "not found"}), 404
+
+    phone = (data.get("phone") or "").strip()
+    email = (data.get("email") or "").strip()
+    blocked = bool(data.get("blocked", True))
+    reason = data.get("reason") or "manual"
+
+    if phone:
+        from callen.storage.db import normalize_phone
+        e164 = normalize_phone(phone) or phone
+        if blocked:
+            db.block_phone(e164, reason=reason)
+        else:
+            db.unblock_phone(e164)
+    elif email:
+        if blocked:
+            db.block_email(email, reason=reason)
+        else:
+            db.unblock_email(email)
+    else:
+        return jsonify({"error": "phone or email required"}), 400
+
+    return jsonify(db.get_contact(contact_id))
+
+
+@bp.route("/api/contacts/<contact_id>/trust", methods=["POST"])
+async def contact_set_trust(contact_id):
+    """Set a contact's trust level.
+
+    Body: {"trust_level": "unverified" | "verified" | "suspect"}
+    """
+    data = await request.get_json() or {}
+    level = (data.get("trust_level") or "").strip()
+    db = _db()
+    if not db.get_contact(contact_id):
+        return jsonify({"error": "not found"}), 404
+    if not db.set_contact_trust(contact_id, level):
+        return jsonify({"error": "invalid trust level"}), 400
+    return jsonify(db.get_contact(contact_id))
+
+
 @bp.route("/api/contacts", methods=["POST"])
 async def create_contact():
     """Create a new contact.

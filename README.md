@@ -88,6 +88,12 @@ requests.
   prompt rules about treating email content as data, never
   instructions, never leaking sensitive information, and always
   including the liability disclaimer in consent-request replies.
+- **Automatic lockout response**: any layer that detects an injection
+  attempt immediately hard-blocks the sender, flips their contact's
+  `trust_level` to `suspect`, files a sender-only security warning
+  ticket (no email body retained), and sends the offender a lockout
+  auto-reply pointing them at the public support number so a false
+  positive can call in and get unblocked.
 
 **Contacts, incidents, and todos**
 - Contacts identified by phone numbers (normalized to E.164-ish digits)
@@ -95,6 +101,9 @@ requests.
 - Consent tracked per contact per channel (phone / email) with source
   and timestamp. Returning callers skip the IVR consent gate; returning
   emailers skip the consent-request reply.
+- **Trust levels** (`unverified` / `verified` / `suspect`) visible on
+  the contact detail view. Injection detection flips to `suspect`
+  automatically; the operator can toggle from the dashboard.
 - Incidents carry subject, status, priority, labels, contact, and a
   structured timeline (calls, emails, notes, todos, status changes,
   consent events)
@@ -135,6 +144,13 @@ requests.
   deployment) with natural phrasing
 - On-site awareness: on-site visits only offered within ~50 miles of
   Roseburg, Oregon
+- Donation nudge on resolution: the final "issue resolved" email
+  includes a short, pressure-free pointer to
+  [freesoftware.support/support.html](https://freesoftware.support/support.html).
+  Skipped on clarifying replies, frustrated users, and repeat donors.
+- Auto-close on bridged calls: calls the operator answers live are
+  closed automatically on hang-up so only voicemails and missed calls
+  stay in the open queue
 - Consent-first: no substantive support is given until the contact
   has explicitly consented. For phone that's the IVR press-1; for
   email that's a reply containing "I consent" / "yes".
@@ -299,6 +315,9 @@ $EDITOR config.toml
 - **`username` is your VoIP.ms account number**, NOT the DID.
 - **`password` is the SIP/IAX password** set in the portal.
 - **`cell_phone` is bare E.164 digits**, no `+`.
+- **`support_phone`** (under `[operator]`) is the public number the
+  lockout auto-reply tells blocked senders to call for appeal —
+  usually your VoIP.ms DID, not your personal cell.
 
 `config.toml` is gitignored — credentials never get committed.
 
@@ -422,6 +441,7 @@ human-readable format where supported.
                                  --subject "..." --add-label billing
 ./tools/note-incident INC-0042 "Internal note"
 ./tools/create-incident --phone 15551234567 --subject "Callback request"
+./tools/delete-incident INC-0042          # hard-delete; linked calls/emails detached, not wiped
 ./tools/merge-incidents INC-0043 INC-0042
 
 # Todos (extracted by agents from call/email content)

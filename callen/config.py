@@ -29,6 +29,9 @@ class OperatorConfig:
     name: str = "Operator"
     cell_phone: str = ""
     default_status: str = "available"
+    # Publicly-advertised support number that a locked-out user can
+    # call to reach a human (usually the VoIP.ms DID, NOT the cell).
+    support_phone: str = ""
 
 
 @dataclass

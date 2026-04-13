@@ -92,6 +92,57 @@ def send_mail(
     return message_id
 
 
+LOCKOUT_SUBJECT = "[freesoftware.support] Your email account has been locked from AI processing"
+
+
+def send_lockout_notice(
+    config: EmailConfig,
+    to_addr: str,
+    support_phone: str,
+    in_reply_to: str | None = None,
+) -> str | None:
+    """Notify a blocked sender that their account is locked out and how
+    to reach a human to appeal. Returns the Message-ID on success, or
+    None if skipped/failed.
+
+    Runs synchronously — caller can wrap in a thread if desired.
+    """
+    if not config.enabled or not to_addr:
+        return None
+    # Don't bounce mail at ourselves or at mailer-daemons
+    lower = to_addr.lower()
+    if lower == (config.from_address or "").lower():
+        return None
+    if any(s in lower for s in ("mailer-daemon", "postmaster", "noreply", "no-reply")):
+        return None
+
+    body = (
+        "Hello,\n\n"
+        "Your email address has been locked out of automated processing at "
+        "freesoftware.support. A message you sent contained content that our "
+        "security filters flagged as a prompt-injection attempt, so the AI "
+        "agent will no longer read messages from your address.\n\n"
+        "If this was a mistake and you're a real person looking for help, "
+        "please call us directly and ask to be unblocked:\n\n"
+        f"    {support_phone or '(phone unavailable — please contact the operator)'}\n\n"
+        "A human will answer and can remove the block. Until then, any "
+        "further emails you send to this address will receive this same "
+        "auto-reply and will NOT be read.\n\n"
+        "— freesoftware.support\n"
+    )
+    try:
+        return send_mail(
+            config,
+            to=to_addr,
+            subject=LOCKOUT_SUBJECT,
+            body_text=body,
+            in_reply_to=in_reply_to,
+        )
+    except Exception:
+        log.exception("Failed to send lockout notice to %s", to_addr)
+        return None
+
+
 def send_voicemail_notification(
     config: EmailConfig,
     caller_id: str,
