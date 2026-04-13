@@ -671,7 +671,29 @@ def cmd_get_email(args):
     em = db.get_email(args.email_id)
     if not em:
         _err(f"email not found: {args.email_id}")
+    em["attachments"] = db.list_email_attachments(args.email_id)
     _out(em, pretty=args.pretty)
+
+
+def cmd_get_attachment(args):
+    db = _db(args)
+    att = db.get_email_attachment(args.attachment_id)
+    if not att:
+        _err(f"attachment not found: {args.attachment_id}")
+
+    if args.out:
+        import shutil
+        from pathlib import Path as _P
+        src = _P(att["file_path"])
+        if not src.exists():
+            _err(f"attachment file missing on disk: {src}")
+        dst = _P(args.out)
+        shutil.copy2(src, dst)
+        _out({"copied_to": str(dst), "size_bytes": dst.stat().st_size})
+    elif args.text:
+        print(att.get("extracted_text") or "")
+    else:
+        _out(att, pretty=args.pretty)
 
 
 def cmd_assign_email(args):
@@ -1112,6 +1134,12 @@ def build_parser() -> argparse.ArgumentParser:
     pp = sub.add_parser("get-email", help="Fetch one email (inbound or outbound)")
     pp.add_argument("email_id", type=int)
     pp.set_defaults(func=cmd_get_email)
+
+    pp = sub.add_parser("get-attachment", help="Fetch / download an email attachment")
+    pp.add_argument("attachment_id", type=int)
+    pp.add_argument("--out", help="copy the raw file to this path")
+    pp.add_argument("--text", action="store_true", help="print just the extracted text")
+    pp.set_defaults(func=cmd_get_attachment)
 
     pp = sub.add_parser("assign-email", help="Route a pending email to an incident")
     pp.add_argument("email_id", type=int)

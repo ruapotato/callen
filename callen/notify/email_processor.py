@@ -35,6 +35,10 @@ from email.message import EmailMessage
 
 from callen.config import EmailConfig
 from callen.storage.models import EmailMessage as EmailRecord
+from callen.notify.attachments import (
+    extract_attachments,
+    append_extracted_text_to_body,
+)
 
 log = logging.getLogger(__name__)
 
@@ -222,10 +226,27 @@ def process_message(
     text_body, html_body = _extract_bodies(msg)
     is_bulk = _looks_like_bulk(msg)
 
-    # Scan for prompt-injection patterns in the body. Matches are
+    # --- Extract attachments (images via OCR, PDFs via pdfplumber) ---
+    # We insert the attachment id placeholder after save_email, but we
+    # need the extracted text NOW so the injection scanner and the
+    # downstream preflight classifier can see it.
+    # Using email_id=0 as a temporary placeholder for the directory slug;
+    # we rename after the row is created.
+    attachment_records: list[dict] = []
+    try:
+        attachment_records = extract_attachments(msg, email_id=0, message_id=message_id)
+    except Exception:
+        log.exception("Attachment extraction failed for %s", message_id)
+
+    # Append extracted attachment text to the body so every downstream
+    # layer sees it as if it were typed in the email.
+    combined_body = append_extracted_text_to_body(text_body, attachment_records)
+
+    # Scan for prompt-injection patterns in the COMBINED body (so OCR'd
+    # text from an image gets the same security treatment). Matches are
     # non-blocking; they just tag the email as 'flagged' so the operator
     # sees it separately from the normal triage queue.
-    injection_hit, injection_reason = _scan_prompt_injection(text_body)
+    injection_hit, injection_reason = _scan_prompt_injection(combined_body)
 
     # Upsert the contact — harmless even for marketing senders because
     # a contact alone doesn't imply a ticket.
@@ -283,7 +304,9 @@ def process_message(
         status = "pending"
         status_reason = ""
 
-    # Store the email row
+    # Store the email row. body_text is the COMBINED body (original +
+    # OCR'd attachment text) so the agent and downstream tools see
+    # everything in one place.
     record = EmailRecord(
         message_id=message_id,
         incident_id=incident_id,
@@ -291,12 +314,27 @@ def process_message(
         from_addr=from_addr,
         to_addr=to_addr,
         subject=subject,
-        body_text=text_body,
+        body_text=combined_body,
         body_html=html_body,
         received_at=time.time(),
         in_reply_to=in_reply_to,
     )
     email_id = db.save_email(record, status=status, status_reason=status_reason)
+
+    # Persist attachment metadata rows now that we have the email_id.
+    for att in attachment_records:
+        try:
+            db.save_email_attachment(
+                email_id=email_id,
+                filename=att["filename"],
+                content_type=att["content_type"],
+                file_path=att["file_path"],
+                size_bytes=att["size_bytes"],
+                extracted_text=att["extracted_text"],
+                extraction_method=att["extraction_method"],
+            )
+        except Exception:
+            log.exception("Failed to save attachment row for email %d", email_id)
 
     result = {
         "status": "stored",

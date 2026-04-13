@@ -330,7 +330,23 @@ async def get_email(email_id):
     e = _db().get_email(email_id)
     if not e:
         return jsonify({"error": "not found"}), 404
+    e["attachments"] = _db().list_email_attachments(email_id)
     return jsonify(e)
+
+
+@bp.route("/api/attachments/<int:attachment_id>")
+async def download_attachment(attachment_id):
+    """Serve the raw attachment file."""
+    att = _db().get_email_attachment(attachment_id)
+    if not att:
+        return jsonify({"error": "not found"}), 404
+    path = att.get("file_path")
+    if not path or not Path(path).exists():
+        return jsonify({"error": "file missing on disk"}), 404
+    return await send_file(
+        path,
+        mimetype=att.get("content_type") or "application/octet-stream",
+    )
 
 
 @bp.route("/api/call/originate", methods=["POST"])

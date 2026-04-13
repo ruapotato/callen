@@ -18,7 +18,7 @@ from callen.storage.models import (
 
 log = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 4
+CURRENT_SCHEMA_VERSION = 5
 
 # --- Schema ---
 
@@ -222,6 +222,9 @@ class Database:
         if self._current_version() < 4:
             self._migrate_to_v4()
 
+        if self._current_version() < 5:
+            self._migrate_to_v5()
+
         log.info("Database ready (schema v%d): %s", self._current_version(), self._path)
 
     def _current_version(self) -> int:
@@ -287,6 +290,29 @@ class Database:
         conn.execute("INSERT OR IGNORE INTO schema_version VALUES (2)")
         conn.commit()
         log.info("Migration v1 -> v2 complete (%d calls migrated)", len(existing))
+
+    def _migrate_to_v5(self):
+        """Add email_attachments table for OCR'd images and extracted PDFs."""
+        log.info("Migrating database schema v4 -> v5 (email attachments)")
+        conn = self._conn()
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS email_attachments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email_id INTEGER NOT NULL REFERENCES emails(id),
+                filename TEXT DEFAULT '',
+                content_type TEXT DEFAULT '',
+                file_path TEXT DEFAULT '',
+                size_bytes INTEGER DEFAULT 0,
+                extracted_text TEXT DEFAULT '',
+                extraction_method TEXT DEFAULT '',
+                created_at REAL NOT NULL DEFAULT (unixepoch('subsec'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_email_attachments_email
+                ON email_attachments(email_id);
+            INSERT OR IGNORE INTO schema_version VALUES (5);
+        """)
+        conn.commit()
+        log.info("Migration v4 -> v5 complete")
 
     def _migrate_to_v4(self):
         """Add incident_todos table — structured checklist per incident."""
@@ -952,6 +978,45 @@ class Database:
     def find_email_by_message_id(self, message_id: str) -> dict | None:
         row = self._conn().execute(
             "SELECT * FROM emails WHERE message_id = ?", (message_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    # --- Email attachments ---
+
+    def save_email_attachment(
+        self,
+        email_id: int,
+        filename: str,
+        content_type: str,
+        file_path: str,
+        size_bytes: int,
+        extracted_text: str = "",
+        extraction_method: str = "",
+    ) -> int:
+        conn = self._conn()
+        cur = conn.execute(
+            """INSERT INTO email_attachments
+               (email_id, filename, content_type, file_path, size_bytes,
+                extracted_text, extraction_method)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (email_id, filename, content_type, file_path, size_bytes,
+             extracted_text, extraction_method),
+        )
+        conn.commit()
+        return cur.lastrowid
+
+    def list_email_attachments(self, email_id: int) -> list[dict]:
+        rows = self._conn().execute(
+            """SELECT id, filename, content_type, file_path, size_bytes,
+                      extracted_text, extraction_method, created_at
+               FROM email_attachments WHERE email_id = ? ORDER BY id""",
+            (email_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_email_attachment(self, attachment_id: int) -> dict | None:
+        row = self._conn().execute(
+            "SELECT * FROM email_attachments WHERE id = ?", (attachment_id,),
         ).fetchone()
         return dict(row) if row else None
 
