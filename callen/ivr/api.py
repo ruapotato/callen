@@ -360,6 +360,13 @@ def has_consented(call: CallenCall) -> bool:
     return bool(getattr(call, "prior_consent", False))
 
 
+def is_blocked(call: CallenCall) -> bool:
+    """True if this caller's phone number is on the hard block list.
+    The IVR script should hang up immediately on any blocked caller
+    without giving them any interaction."""
+    return bool(getattr(call, "is_blocked", False))
+
+
 # --- Internal helpers (not exposed to IVR scripts) ---
 
 _active_recorders: dict[str, list] = {}

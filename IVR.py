@@ -20,6 +20,12 @@
 
 
 def IVR(call):
+    # Hard block — if this number is on the quarantine list, hang up
+    # immediately. No greeting, no menu, no agent exposure.
+    if is_blocked(call):
+        hangup(call)
+        return
+
     # Recording consent — required before anything else.
     # Returning callers who already agreed on a prior call skip the gate
     # but are reminded that the call is still being recorded AND that the

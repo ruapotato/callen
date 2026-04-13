@@ -50,10 +50,24 @@ INCIDENT_ID_PATTERN = re.compile(r"\b(INC-\d{4,})\b")
 # they move the email to 'flagged' status with a reason so the operator
 # can review and either mark-safe or reject.
 PROMPT_INJECTION_PATTERNS: list[tuple[re.Pattern, str]] = [
-    (re.compile(r"ignore\s+(?:all\s+)?(?:previous|prior|above)\s+(?:instructions?|prompts?|messages?)", re.I),
+    (re.compile(r"ignore\s+(?:all\s+)?(?:previous|prior|above)\s+(?:instructions?|prompts?|messages?|rules?)", re.I),
      "ignore previous instructions"),
     (re.compile(r"forget\s+(?:all|everything|your)\s+(?:instructions?|prompts?|rules?|prior)", re.I),
      "forget instructions"),
+    (re.compile(r"forget\s+(?:all\s+)?(?:previous|prior|above)\s+(?:prompts?|instructions?|rules?|messages?)", re.I),
+     "forget previous prompts"),
+    (re.compile(r"(?:send|give|tell|share|reveal|forward|read)\s+(?:me\s+)?(?:the\s+|my\s+|any\s+|our\s+|all\s+)?(?:one[-\s]?time\s+)?(?:password|passcode|code|otp|2fa|token|secret|credential)", re.I),
+     "requesting credentials / OTP"),
+    (re.compile(r"(?:send|give|tell|share|reveal|forward)\s+(?:me\s+)?(?:the\s+|my\s+|any\s+)?(?:login|verification|recovery|reset)\s+(?:code|password|link|key)", re.I),
+     "requesting login / reset data"),
+    (re.compile(r"(?:received|stored|saved|captured)\s+on\s+this\s+account", re.I),
+     "asking for data stored on this account"),
+    (re.compile(r"forget\s+(?:all\s+)?(?:previous|prior|above)\s+(?:prompts?|instructions?|rules?|messages?)", re.I),
+     "forget previous prompts"),
+    (re.compile(r"(?:send|give|tell|share|reveal|forward)\s+(?:me\s+)?(?:the\s+|my\s+|any\s+)?(?:one[-\s]?time\s+)?(?:password|passcode|code|otp|2fa|token|secret|credential)", re.I),
+     "requesting credentials / OTP"),
+    (re.compile(r"(?:send|give|tell|share|reveal|forward)\s+(?:me\s+)?(?:the\s+|my\s+|any\s+)?(?:login|verification|recovery|reset)", re.I),
+     "requesting login data"),
     (re.compile(r"disregard\s+(?:all|everything|previous|prior|above)", re.I),
      "disregard previous"),
     (re.compile(r"you\s+are\s+(?:now\s+)?(?:a|an)?\s*(?:DAN|jailbroken|unrestricted|uncensored)", re.I),
@@ -217,6 +231,44 @@ def process_message(
     if any(s in from_addr for s in ("mailer-daemon", "postmaster", "no-reply", "noreply")):
         log.info("Skipping system message from %s", from_addr)
         return None
+
+    # --- Hard block check ---
+    # If this sender's email address is on the blocked list, we do NOT
+    # extract attachments, run OCR, call the preflight LLM, or touch the
+    # Claude agent. Store a minimal row with status='rejected' so there's
+    # an audit trail, and nothing else.
+    try:
+        is_blocked, block_reason = db.email_is_blocked(from_addr)
+    except Exception:
+        is_blocked, block_reason = False, ""
+    if is_blocked:
+        log.warning("BLOCKED sender %s: %s (message %s)",
+                    from_addr, block_reason, message_id)
+        try:
+            blocked_record = EmailRecord(
+                message_id=message_id,
+                incident_id=None,
+                direction="in",
+                from_addr=from_addr,
+                to_addr=to_addr,
+                subject=subject,
+                body_text="(body not stored — sender is on the block list)",
+                body_html="",
+                received_at=time.time(),
+                in_reply_to=in_reply_to,
+            )
+            db.save_email(
+                blocked_record,
+                status="rejected",
+                status_reason=f"blocked_sender: {block_reason}",
+            )
+        except Exception:
+            log.exception("Failed to persist blocked-sender stub row")
+        return {
+            "status": "blocked_sender",
+            "from": from_addr,
+            "reason": block_reason,
+        }
 
     # Dedupe by message-id
     if db.find_email_by_message_id(message_id):

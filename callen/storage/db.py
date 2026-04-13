@@ -18,7 +18,7 @@ from callen.storage.models import (
 
 log = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 5
+CURRENT_SCHEMA_VERSION = 6
 
 # --- Schema ---
 
@@ -225,6 +225,9 @@ class Database:
         if self._current_version() < 5:
             self._migrate_to_v5()
 
+        if self._current_version() < 6:
+            self._migrate_to_v6()
+
         log.info("Database ready (schema v%d): %s", self._current_version(), self._path)
 
     def _current_version(self) -> int:
@@ -290,6 +293,37 @@ class Database:
         conn.execute("INSERT OR IGNORE INTO schema_version VALUES (2)")
         conn.commit()
         log.info("Migration v1 -> v2 complete (%d calls migrated)", len(existing))
+
+    def _migrate_to_v6(self):
+        """Add blocked_at / blocked_reason columns to contact_phones and
+        contact_emails so senders can be hard-quarantined before any
+        LLM or agent sees their content."""
+        log.info("Migrating database schema v5 -> v6 (bad actor blocking)")
+        conn = self._conn()
+
+        # contact_phones
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(contact_phones)").fetchall()}
+        if "blocked_at" not in cols:
+            conn.execute("ALTER TABLE contact_phones ADD COLUMN blocked_at REAL")
+        if "blocked_reason" not in cols:
+            conn.execute("ALTER TABLE contact_phones ADD COLUMN blocked_reason TEXT DEFAULT ''")
+
+        # contact_emails
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(contact_emails)").fetchall()}
+        if "blocked_at" not in cols:
+            conn.execute("ALTER TABLE contact_emails ADD COLUMN blocked_at REAL")
+        if "blocked_reason" not in cols:
+            conn.execute("ALTER TABLE contact_emails ADD COLUMN blocked_reason TEXT DEFAULT ''")
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_contact_phones_blocked ON contact_phones(blocked_at)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_contact_emails_blocked ON contact_emails(blocked_at)"
+        )
+        conn.execute("INSERT OR IGNORE INTO schema_version VALUES (6)")
+        conn.commit()
+        log.info("Migration v5 -> v6 complete")
 
     def _migrate_to_v5(self):
         """Add email_attachments table for OCR'd images and extracted PDFs."""
@@ -492,6 +526,86 @@ class Database:
             "SELECT consented_at FROM contact_phones WHERE e164 = ?", (e164,)
         ).fetchone()
         return bool(row and row["consented_at"])
+
+    def email_is_blocked(self, address: str) -> tuple[bool, str]:
+        """Check if an email address is quarantined. Returns (blocked, reason)."""
+        row = self._conn().execute(
+            "SELECT blocked_at, blocked_reason FROM contact_emails WHERE address = ?",
+            (address.lower(),),
+        ).fetchone()
+        if row and row["blocked_at"]:
+            return True, (row["blocked_reason"] or "blocked")
+        return False, ""
+
+    def phone_is_blocked(self, e164: str) -> tuple[bool, str]:
+        row = self._conn().execute(
+            "SELECT blocked_at, blocked_reason FROM contact_phones WHERE e164 = ?",
+            (e164,),
+        ).fetchone()
+        if row and row["blocked_at"]:
+            return True, (row["blocked_reason"] or "blocked")
+        return False, ""
+
+    def block_email(self, address: str, reason: str = "manual") -> bool:
+        conn = self._conn()
+        cur = conn.execute(
+            """UPDATE contact_emails
+               SET blocked_at = unixepoch('subsec'), blocked_reason = ?
+               WHERE address = ?""",
+            (reason, address.lower()),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+    def unblock_email(self, address: str) -> bool:
+        conn = self._conn()
+        cur = conn.execute(
+            """UPDATE contact_emails
+               SET blocked_at = NULL, blocked_reason = ''
+               WHERE address = ?""",
+            (address.lower(),),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+    def block_phone(self, e164: str, reason: str = "manual") -> bool:
+        conn = self._conn()
+        cur = conn.execute(
+            """UPDATE contact_phones
+               SET blocked_at = unixepoch('subsec'), blocked_reason = ?
+               WHERE e164 = ?""",
+            (reason, e164),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+    def unblock_phone(self, e164: str) -> bool:
+        conn = self._conn()
+        cur = conn.execute(
+            """UPDATE contact_phones
+               SET blocked_at = NULL, blocked_reason = ''
+               WHERE e164 = ?""",
+            (e164,),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+    def list_blocked(self) -> dict:
+        """Return dict with 'emails' and 'phones' lists of blocked addresses."""
+        conn = self._conn()
+        emails = [dict(r) for r in conn.execute(
+            """SELECT address, contact_id, blocked_at, blocked_reason
+               FROM contact_emails
+               WHERE blocked_at IS NOT NULL
+               ORDER BY blocked_at DESC"""
+        ).fetchall()]
+        phones = [dict(r) for r in conn.execute(
+            """SELECT e164, contact_id, blocked_at, blocked_reason
+               FROM contact_phones
+               WHERE blocked_at IS NOT NULL
+               ORDER BY blocked_at DESC"""
+        ).fetchall()]
+        return {"emails": emails, "phones": phones}
 
     def get_contact(self, contact_id: str) -> dict | None:
         conn = self._conn()

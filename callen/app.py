@@ -89,6 +89,20 @@ def main(config_path: str = "config.toml"):
             call.contact_id = contact_id
             call.normalized_phone = e164
 
+            # Hard block check — if this number is on the block list, flag
+            # the call object so the IVR script can hang up immediately
+            # without the operator or agent ever seeing it. Still creates
+            # a contact / incident stub so we have an audit trail.
+            try:
+                blocked, block_reason = db.phone_is_blocked(e164)
+                call.is_blocked = blocked
+                call.block_reason = block_reason
+                if blocked:
+                    log.warning("BLOCKED caller %s: %s", e164, block_reason)
+            except Exception:
+                call.is_blocked = False
+                call.block_reason = ""
+
             # Remember if this phone has already consented — the IVR script
             # can skip the consent gate for returning callers.
             call.prior_consent = db.phone_has_consent(e164)

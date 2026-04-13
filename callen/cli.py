@@ -538,6 +538,72 @@ def cmd_search(args):
         _out(results)
 
 
+# --- Bad actor quarantine ---
+
+
+def cmd_block_sender(args):
+    """Quarantine a sender so future inbound email/calls are rejected
+    at the front door — no OCR, no preflight, no agent exposure."""
+    db = _db(args)
+    reason = args.reason or "manual"
+    blocked_any = False
+    result: dict = {"blocked": [], "reason": reason}
+
+    if args.email:
+        ok = db.block_email(args.email, reason=reason)
+        if ok:
+            result["blocked"].append({"type": "email", "address": args.email})
+            blocked_any = True
+    if args.phone:
+        from callen.storage.db import normalize_phone
+        e164 = normalize_phone(args.phone) or args.phone
+        ok = db.block_phone(e164, reason=reason)
+        if ok:
+            result["blocked"].append({"type": "phone", "e164": e164})
+            blocked_any = True
+
+    if not blocked_any:
+        _err("no records matched. Use create-contact / add-email / add-phone first, or check --email / --phone arguments.")
+    _out(result, pretty=args.pretty)
+
+
+def cmd_unblock_sender(args):
+    db = _db(args)
+    result: dict = {"unblocked": []}
+    if args.email:
+        if db.unblock_email(args.email):
+            result["unblocked"].append({"type": "email", "address": args.email})
+    if args.phone:
+        from callen.storage.db import normalize_phone
+        e164 = normalize_phone(args.phone) or args.phone
+        if db.unblock_phone(e164):
+            result["unblocked"].append({"type": "phone", "e164": e164})
+    _out(result, pretty=args.pretty)
+
+
+def cmd_list_blocked(args):
+    db = _db(args)
+    result = db.list_blocked()
+    if args.pretty:
+        if not result["emails"] and not result["phones"]:
+            print("(no blocked senders)")
+            return
+        if result["emails"]:
+            print("Blocked emails:")
+            for e in result["emails"]:
+                when = time.strftime('%Y-%m-%d %H:%M',
+                                     time.localtime(e['blocked_at']))
+                print(f"  {e['address']:<40s}  {when}  {e.get('blocked_reason','')}")
+        if result["phones"]:
+            print("Blocked phones:")
+            for p in result["phones"]:
+                when = time.strftime('%Y-%m-%d %H:%M',
+                                     time.localtime(p['blocked_at']))
+                print(f"  {p['e164']:<20s}  {when}  {p.get('blocked_reason','')}")
+        return
+    _out(result)
+
+
 # --- Todos (actionable checklist per incident) ---
 
 
@@ -1096,6 +1162,21 @@ def build_parser() -> argparse.ArgumentParser:
     pp = sub.add_parser("search", help="Fuzzy search contacts and incidents")
     pp.add_argument("query", help="partial name, phone digits, email, or subject")
     pp.set_defaults(func=cmd_search)
+
+    # bad actor quarantine
+    pp = sub.add_parser("block-sender", help="Quarantine an email / phone so the pipeline rejects it at the door")
+    pp.add_argument("--email", help="email address to block")
+    pp.add_argument("--phone", help="phone number to block")
+    pp.add_argument("--reason", help="why this sender is being blocked")
+    pp.set_defaults(func=cmd_block_sender)
+
+    pp = sub.add_parser("unblock-sender", help="Remove an email / phone from the block list")
+    pp.add_argument("--email")
+    pp.add_argument("--phone")
+    pp.set_defaults(func=cmd_unblock_sender)
+
+    pp = sub.add_parser("list-blocked", help="List all blocked senders")
+    pp.set_defaults(func=cmd_list_blocked)
 
     # todos
     pp = sub.add_parser("list-todos", help="Show the todo checklist for an incident")

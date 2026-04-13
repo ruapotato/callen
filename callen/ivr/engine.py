@@ -115,6 +115,7 @@ class IVREngine:
             "caller_id": api.caller_id,
             "operator_available": api.operator_available,
             "has_consented": api.has_consented,
+            "is_blocked": api.is_blocked,
         }
 
         try:
