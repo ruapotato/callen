@@ -14,7 +14,7 @@ the same problems.
 
 ## How it works
 
-- **Phone**: Call 541-919-4096. You will hear a recording-consent
+- **Phone**: Call **541-919-4096**. You will hear a recording-consent
   greeting. Press 1 to consent to being recorded and continue. From
   the main menu press 1 to speak to a technician or 2 to leave a
   voicemail.
@@ -24,6 +24,33 @@ the same problems.
   record and publish the conversation. Reply with "I consent" or
   "yes" to proceed. Subsequent emails on the same thread don't need
   re-consent.
+
+## Service area
+
+- **Remote support (phone, email, screen-share)**: available to
+  anyone, anywhere.
+- **On-site visits**: only available in and around Roseburg, Oregon
+  (~50 mile radius). If you're outside that area, the best we can
+  offer is phone + remote guided troubleshooting.
+
+## Liability disclaimer
+
+By accepting support from freesoftware.support (whether by pressing 1
+on the IVR or by replying "I consent" to an email consent request),
+you acknowledge and agree that:
+
+> freesoftware.support, its operator, and any technician involved
+> will NOT be held liable for any damage to equipment, loss of data,
+> service interruption, or any other direct or indirect consequences
+> that may result from the support session, the advice given, the
+> commands run, or any action taken on your systems during or after
+> our interaction.
+
+This disclaimer is included in both the phone IVR consent greeting
+and every email consent-request reply, and it applies to every
+support channel. If you do not agree with these terms, do not press
+1 on the IVR, do not reply with consent to our email, and do not
+continue the interaction.
 
 ## What we can help with
 
