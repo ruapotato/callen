@@ -12,6 +12,7 @@ between polls.
 
 import imaplib
 import logging
+import ssl
 import threading
 import time
 
@@ -78,10 +79,23 @@ class IMAPPoller:
 
     def _connect(self) -> imaplib.IMAP4:
         cfg = self._config
+        # Proton Bridge uses a self-signed certificate on 127.0.0.1, so we
+        # need an SSL context that doesn't verify for localhost connections.
+        # For real remote hosts this should use the default verified context.
+        is_local = cfg.imap_host in ("127.0.0.1", "localhost", "::1")
+        if is_local:
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+        else:
+            ctx = ssl.create_default_context()
+
         if cfg.imap_ssl:
-            conn = imaplib.IMAP4_SSL(cfg.imap_host, cfg.imap_port)
+            conn = imaplib.IMAP4_SSL(cfg.imap_host, cfg.imap_port, ssl_context=ctx)
         else:
             conn = imaplib.IMAP4(cfg.imap_host, cfg.imap_port)
+            if cfg.imap_starttls:
+                conn.starttls(ssl_context=ctx)
         user = cfg.imap_user or cfg.smtp_user
         password = cfg.imap_password or cfg.smtp_password
         conn.login(user, password)

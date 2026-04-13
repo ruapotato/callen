@@ -7,6 +7,7 @@
 import email.utils
 import logging
 import smtplib
+import ssl
 import threading
 import uuid
 from email.mime.text import MIMEText
@@ -16,6 +17,17 @@ from email import encoders
 from pathlib import Path
 
 from callen.config import EmailConfig
+
+
+def _smtp_ssl_context(host: str) -> ssl.SSLContext:
+    """Build an SSL context tolerant of Proton Bridge's self-signed cert
+    when talking to localhost. Strict verification for remote hosts."""
+    is_local = host in ("127.0.0.1", "localhost", "::1")
+    ctx = ssl.create_default_context()
+    if is_local:
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+    return ctx
 
 log = logging.getLogger(__name__)
 
@@ -62,7 +74,7 @@ def send_mail(
 
     if config.smtp_tls:
         server = smtplib.SMTP(config.smtp_host, config.smtp_port)
-        server.starttls()
+        server.starttls(context=_smtp_ssl_context(config.smtp_host))
     else:
         server = smtplib.SMTP(config.smtp_host, config.smtp_port)
 

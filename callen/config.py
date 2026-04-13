@@ -92,7 +92,8 @@ class EmailConfig:
     imap_enabled: bool = False
     imap_host: str = ""
     imap_port: int = 993
-    imap_ssl: bool = True
+    imap_ssl: bool = True          # pure SSL (port 993 default)
+    imap_starttls: bool = False    # plain-then-upgrade (port 143 or Bridge 1143)
     imap_user: str = ""            # defaults to smtp_user if empty
     imap_password: str = ""        # defaults to smtp_password if empty
     imap_mailbox: str = "INBOX"
