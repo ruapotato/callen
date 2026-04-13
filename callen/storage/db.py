@@ -821,6 +821,48 @@ class Database:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def list_all_todos(self, done: bool | None = False, limit: int = 500) -> list[dict]:
+        """Aggregate todos across every incident. Joins incident + contact
+        info so the dashboard can render a cross-ticket checklist view.
+
+        done=False returns only open todos (default)
+        done=True  returns only completed todos
+        done=None  returns both
+        """
+        where = []
+        args: list = []
+        if done is False:
+            where.append("t.done = 0")
+        elif done is True:
+            where.append("t.done = 1")
+        wclause = "WHERE " + " AND ".join(where) if where else ""
+        args.append(limit)
+        rows = self._conn().execute(
+            f"""SELECT t.id, t.incident_id, t.text, t.done, t.author,
+                       t.created_at, t.completed_at,
+                       i.subject AS incident_subject,
+                       i.status AS incident_status,
+                       i.priority AS incident_priority,
+                       i.contact_id,
+                       c.display_name AS contact_name
+                FROM incident_todos t
+                JOIN incidents i ON i.id = t.incident_id
+                LEFT JOIN contacts c ON c.id = i.contact_id
+                {wclause}
+                ORDER BY
+                  CASE i.priority
+                    WHEN 'urgent' THEN 0
+                    WHEN 'high'   THEN 1
+                    WHEN 'normal' THEN 2
+                    WHEN 'low'    THEN 3
+                    ELSE 4
+                  END ASC,
+                  t.created_at DESC
+                LIMIT ?""",
+            args,
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def add_todo(self, incident_id: str, text: str, author: str = "operator") -> int:
         conn = self._conn()
         # Append to the end: position = (max existing) + 1

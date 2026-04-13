@@ -38,6 +38,20 @@ voice = "af_heart"   # kokoro: voice id; espeak: voice name
 lang_code = "a"      # kokoro lang: 'a' = American English, 'b' = British
 device = ""          # "", "cpu", or "cuda"
 
+[preflight]
+# Local-LLM email classifier — a defense-in-depth layer that runs a
+# small model via Ollama to screen every inbound email BEFORE it ever
+# reaches the Claude Code agent. Catches prompt injection, marketing,
+# and automated mail that a regex scanner might miss.
+#
+# Requires Ollama running locally and the chosen model pulled:
+#   ollama pull mistral:7b
+enabled = true
+provider = "ollama"
+url = "http://localhost:11434"
+model = "mistral:7b"
+timeout = 30.0
+
 [web]
 host = "127.0.0.1"
 port = 8080

@@ -140,6 +140,25 @@ async def incident_detail(incident_id):
 # --- Todos ---
 
 
+@bp.route("/api/todos")
+async def list_all_todos():
+    """Aggregate todos across all incidents.
+
+    ?status=open (default)  — only undone todos
+    ?status=done            — only completed
+    ?status=all             — both
+    """
+    status = request.args.get("status", "open")
+    limit = request.args.get("limit", 500, type=int)
+    if status == "done":
+        done = True
+    elif status == "all":
+        done = None
+    else:
+        done = False
+    return jsonify(_db().list_all_todos(done=done, limit=limit))
+
+
 @bp.route("/api/incidents/<incident_id>/todos")
 async def list_incident_todos(incident_id):
     return jsonify(_db().list_todos(incident_id))

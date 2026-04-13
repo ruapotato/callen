@@ -342,6 +342,167 @@ def main(config_path: str = "config.toml"):
 
     event_bus.subscribe("call.bridge_completed", on_bridge_completed)
 
+    # --- Preflight classifier (local LLM defense in depth) ---
+    from callen.security.preflight import PreflightClassifier
+    preflight = PreflightClassifier(
+        enabled=config.preflight.enabled,
+        url=config.preflight.url,
+        model=config.preflight.model,
+        timeout=config.preflight.timeout,
+    )
+    if preflight.enabled:
+        log.info("Preflight email classifier: %s via %s",
+                 preflight.model, preflight.url)
+
+    # --- Auto-agent: review inbound email as soon as it's stored ---
+    def on_email_received(data):
+        """Triage a new inbound email with:
+          1. Local LLM preflight (Mistral via Ollama) — screens for
+             prompt injection / marketing / legitimacy BEFORE the
+             email can reach the Claude agent.
+          2. If the preflight passes, fire the autonomous Claude agent
+             to do the substantive review and reply.
+        """
+        email_id = data.get("email_id")
+        if not email_id:
+            return
+
+        try:
+            em = db.get_email(email_id)
+        except Exception:
+            log.exception("Failed to load email %s for auto-review", email_id)
+            return
+        if not em:
+            return
+
+        status = em.get("status", "pending")
+        if status not in ("pending", "attached"):
+            log.info("Skipping auto-review for email %d (status=%s)", email_id, status)
+            return
+
+        # --- Step 1: local LLM preflight ---
+        # The deterministic regex scanner already flagged obvious
+        # injections before we got here (those emails have
+        # status='flagged' and won't reach this point). Now we add an
+        # intent-aware second layer: a small local model sees the
+        # email and returns structured booleans. The Claude agent
+        # only gets emails that pass this gate.
+        if preflight.enabled:
+            try:
+                classification = preflight.classify_email(
+                    from_addr=em.get("from_addr", ""),
+                    subject=em.get("subject", ""),
+                    body_text=em.get("body_text", ""),
+                )
+                verdict, reason = preflight.recommendation(classification)
+                log.info(
+                    "Preflight %d: verdict=%s reason=%s model=%s",
+                    email_id, verdict, reason, classification.get("model", "?"),
+                )
+
+                if verdict == "flag":
+                    db.set_email_status(
+                        email_id, "flagged",
+                        f"preflight: {reason}",
+                    )
+                    if em.get("incident_id"):
+                        db.add_incident_entry(
+                            em["incident_id"], "note", author="preflight",
+                            payload={"text": f"Email {email_id} flagged by preflight: {reason}"},
+                        )
+                    return  # Claude agent never sees it
+
+                if verdict == "reject":
+                    db.set_email_status(
+                        email_id, "rejected",
+                        f"preflight: {reason}",
+                    )
+                    return  # Auto-rejected, no agent run
+
+                if verdict == "skip":
+                    log.info("Preflight unavailable — passing email %d through", email_id)
+
+                # verdict == "pass" or "skip" -> fall through to agent run
+            except Exception:
+                log.exception("Preflight classifier errored — flagging defensively")
+                db.set_email_status(email_id, "flagged", "preflight error")
+                return
+
+        incident_id = em.get("incident_id")
+        from_addr = em.get("from_addr", "")
+        subject = em.get("subject", "")
+
+        if incident_id:
+            # Threaded reply — review the thread, decide next action
+            prompt = (
+                f"Autonomous review: a new email arrived on thread {incident_id}.\n\n"
+                f"Email {email_id}: from {from_addr}, subject '{subject}'.\n\n"
+                f"Apply the email handling rules from the system prompt:\n"
+                f"1. Read the full incident thread with ./tools/get-incident {incident_id}\n"
+                f"2. Read this specific email with ./tools/get-email {email_id}\n"
+                f"3. Check the contact's email consent via the get-incident output\n"
+                f"4. Decide the next action:\n"
+                f"   - If the reply contains affirmative consent, record it via\n"
+                f"     ./tools/contact-consent and then proceed\n"
+                f"   - If it's a clarifying answer to a previous question, update\n"
+                f"     the incident (subject, notes, todos) accordingly\n"
+                f"   - If it introduces a new topic, update the subject/notes\n"
+                f"   - If it's vague, send a clarifying reply via\n"
+                f"     ./tools/send-email {incident_id}\n"
+                f"   - Create todos ONLY when there's enough info for a concrete\n"
+                f"     human-actionable item\n"
+                f"5. Never include sensitive information in outgoing replies\n\n"
+                f"Respond with one sentence describing what you changed."
+            )
+        else:
+            # New unthreaded email — decide if it's worth processing
+            prompt = (
+                f"Autonomous triage: a new inbound email arrived (#{email_id}) from\n"
+                f"{from_addr}, subject '{subject}'.\n\n"
+                f"Follow the email handling rules:\n"
+                f"1. Read the full email body with ./tools/get-email {email_id}\n"
+                f"2. If it's an OTP/verification code, password reset, login code,\n"
+                f"   receipt, newsletter, shipping notice, or similar automated/\n"
+                f"   transactional email, reject it immediately via\n"
+                f"   ./tools/reject-email {email_id} --reason \"...\"\n"
+                f"3. If it looks like a legitimate support request, create an\n"
+                f"   incident for it via ./tools/assign-email {email_id}\n"
+                f"   --create-incident --subject \"short description\"\n"
+                f"4. Check the contact's consent state. If they have not consented\n"
+                f"   via email yet, send a consent-request reply explaining this\n"
+                f"   is a recorded community support service and ask them to\n"
+                f"   reply with 'I consent'. Do NOT answer their technical\n"
+                f"   question yet and do NOT create a human todo until consent\n"
+                f"   is on file.\n"
+                f"5. If consent is already on file and the request is concrete,\n"
+                f"   add todos via ./tools/add-todo. If it's vague, send a\n"
+                f"   clarifying reply.\n"
+                f"6. Never include sensitive info in outgoing email.\n\n"
+                f"Respond with one sentence describing what you did."
+            )
+
+        async def _start():
+            try:
+                await agent_runner.start(
+                    prompt,
+                    context={
+                        "email_id": email_id,
+                        "incident_id": incident_id,
+                        "trigger": "email.received",
+                        "auto": True,
+                    },
+                    autonomous=True,
+                )
+            except Exception:
+                log.exception("Failed to start auto-agent for email")
+
+        try:
+            asyncio.run_coroutine_threadsafe(_start(), web_loop)
+        except Exception:
+            log.exception("Failed to schedule email auto-review")
+
+    event_bus.subscribe("email.received", on_email_received)
+
     def run_web():
         asyncio.set_event_loop(web_loop)
         # Forward EventBus events into the web loop's WebSocket broadcast funcs

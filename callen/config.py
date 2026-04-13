@@ -53,6 +53,16 @@ class TranscriptionConfig:
 
 
 @dataclass
+class PreflightConfig:
+    """Local-LLM email classifier (defense in depth before Claude agent)."""
+    enabled: bool = True
+    provider: str = "ollama"
+    url: str = "http://localhost:11434"
+    model: str = "mistral:7b"
+    timeout: float = 30.0
+
+
+@dataclass
 class TTSConfig:
     """Text-to-speech engine selection + parameters."""
     engine: str = "kokoro"       # "kokoro" or "espeak"
@@ -106,6 +116,7 @@ class CallenConfig:
     voicemail: VoicemailConfig = field(default_factory=VoicemailConfig)
     transcription: TranscriptionConfig = field(default_factory=TranscriptionConfig)
     tts: TTSConfig = field(default_factory=TTSConfig)
+    preflight: PreflightConfig = field(default_factory=PreflightConfig)
     web: WebConfig = field(default_factory=WebConfig)
     email: EmailConfig = field(default_factory=EmailConfig)
     general: GeneralConfig = field(default_factory=GeneralConfig)
@@ -139,6 +150,7 @@ def load_config(path: str = "config.toml") -> CallenConfig:
         "voicemail": cfg.voicemail,
         "transcription": cfg.transcription,
         "tts": cfg.tts,
+        "preflight": cfg.preflight,
         "web": cfg.web,
         "email": cfg.email,
         "general": cfg.general,

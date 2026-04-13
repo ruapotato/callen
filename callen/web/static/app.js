@@ -202,6 +202,10 @@ async function loadQueue() {
                 items = await api('/incidents?limit=200');
                 renderIncidentsQueue(items);
                 break;
+            case 'todos':
+                items = await api('/todos?status=open');
+                renderTodosQueue(items);
+                break;
             case 'pending-emails':
                 items = await api('/emails?status=pending&limit=100');
                 renderEmailsQueue(items, 'pending');
@@ -217,6 +221,64 @@ async function loadQueue() {
         }
     } catch (e) {
         list.innerHTML = `<div class="empty-state">Error: ${escapeHtml(e.message)}</div>`;
+    }
+}
+
+function renderTodosQueue(items) {
+    const list = $('queue-list');
+    clear(list);
+    if (!items.length) {
+        list.appendChild(el('div', { class: 'empty-state' },
+            'No open todos. Either nothing to do, or the agent hasn\'t extracted any yet.'));
+        return;
+    }
+
+    // Group by incident so the operator sees "tickets with open work"
+    const byIncident = new Map();
+    for (const t of items) {
+        if (!byIncident.has(t.incident_id)) byIncident.set(t.incident_id, []);
+        byIncident.get(t.incident_id).push(t);
+    }
+
+    for (const [incidentId, todos] of byIncident) {
+        const first = todos[0];
+        const contact = first.contact_name || '(unnamed)';
+        const subject = first.incident_subject || '(no subject)';
+
+        const groupHeader = el('div', {
+            class: 'todos-group-header',
+            onclick: () => selectIncident(incidentId),
+        }, [
+            el('div', { class: 'tg-contact' }, contact),
+            el('div', { class: 'tg-subject' }, subject),
+            el('div', { class: 'tg-meta' }, [
+                el('span', { class: 'q-id' }, incidentId),
+                el('span', { class: `status-pill ${first.incident_status}` }, first.incident_status),
+                el('span', { class: `priority-pill ${first.incident_priority}` }, first.incident_priority),
+                el('span', { class: 'tg-count' }, `${todos.length} open`),
+            ]),
+        ]);
+        list.appendChild(groupHeader);
+
+        for (const t of todos) {
+            const row = el('div', { class: 'todos-queue-row' });
+            const check = el('input', { type: 'checkbox', class: 'todo-check' });
+            check.addEventListener('change', async () => {
+                try {
+                    await api(`/todos/${t.id}`, {
+                        method: 'PATCH',
+                        body: JSON.stringify({ done: check.checked, author: 'operator' }),
+                    });
+                    loadQueue();
+                } catch (e) { alert(`Failed: ${e.message}`); }
+            });
+            row.appendChild(check);
+            row.appendChild(el('span', { class: 'todo-text' }, t.text));
+            row.addEventListener('click', (e) => {
+                if (e.target !== check) selectIncident(incidentId);
+            });
+            list.appendChild(row);
+        }
     }
 }
 
