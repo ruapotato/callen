@@ -48,9 +48,16 @@ for a human-readable format where supported.
 ./tools/update-contact CON-0001 --name "..." --notes "..."
 ./tools/add-phone CON-0001 15551234567
 ./tools/add-email CON-0001 jane@example.com
+./tools/remove-phone CON-0001 15551234567         # detach a phone
+./tools/remove-email CON-0001 jane@example.com    # detach an email
+./tools/rename-phone CON-0001 anonymous 15551234567   # fix a placeholder value
+./tools/rename-email CON-0001 old@x.com new@x.com
 ./tools/contact-consent CON-0001 --phone 15551234567 --source manual
 ./tools/merge-contacts CON-0002 CON-0001      # source -> destination
 ./tools/merge-incidents INC-0043 INC-0042     # source -> destination
+./tools/reassign-incident INC-0042 CON-0007   # move ticket to a different contact
+./tools/delete-incident INC-0042              # hard-delete an incident
+./tools/delete-contact CON-0001 [--cascade]   # delete contact; --cascade also wipes every incident on it
 ./tools/set-operator-status {available|busy|dnd}
 ./tools/assign-email 42 --incident INC-0042                # thread to existing
 ./tools/assign-email 42 --create-incident --subject "..."  # create from email

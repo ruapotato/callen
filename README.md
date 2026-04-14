@@ -443,6 +443,7 @@ human-readable format where supported.
 ./tools/create-incident --phone 15551234567 --subject "Callback request"
 ./tools/delete-incident INC-0042          # hard-delete; linked calls/emails detached, not wiped
 ./tools/merge-incidents INC-0043 INC-0042
+./tools/reassign-incident INC-0042 CON-0008   # move ticket to a different contact
 
 # Todos (extracted by agents from call/email content)
 ./tools/list-todos INC-0042
@@ -460,8 +461,13 @@ human-readable format where supported.
 ./tools/update-contact CON-0007 --name "Jane" --notes "Prefers email"
 ./tools/add-phone CON-0007 15555550123
 ./tools/add-email CON-0007 alt@example.com
+./tools/remove-phone CON-0007 15555550123            # detach a phone
+./tools/remove-email CON-0007 alt@example.com
+./tools/rename-phone CON-0007 anonymous 15551234567  # rewrite a placeholder
+./tools/rename-email CON-0007 old@x.com new@x.com
 ./tools/contact-consent CON-0007 --phone 15551234567 --source manual
 ./tools/merge-contacts CON-0008 CON-0007
+./tools/delete-contact CON-0007 [--cascade]          # --cascade also deletes every incident on the contact
 
 # Transcripts and audio
 ./tools/get-transcript --incident INC-0042 --text

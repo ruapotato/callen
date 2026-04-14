@@ -40,6 +40,8 @@ class CallenCall(pj.Call):
         self._on_state_change = None
         self._on_media_ready = None
         self._audio_media: pj.AudioMedia | None = None
+        self.last_status_code: int = 0
+        self.last_reason: str = ""
 
     def set_callbacks(self, on_state_change=None, on_media_ready=None):
         self._on_state_change = on_state_change
@@ -49,6 +51,12 @@ class CallenCall(pj.Call):
         try:
             ci = self.getInfo()
             log.info("Call %s state: %s (%d)", self.uuid[:8], ci.stateText, ci.lastStatusCode)
+
+            # Always capture the last SIP status so callers can report
+            # why a call ended (e.g. 503 from the carrier vs. 487 user
+            # cancel vs. 200 normal hangup).
+            self.last_status_code = int(getattr(ci, "lastStatusCode", 0) or 0)
+            self.last_reason = str(getattr(ci, "lastReason", "") or "")
 
             if ci.state == pj.PJSIP_INV_STATE_CONFIRMED:
                 self.state = CallState.ACTIVE

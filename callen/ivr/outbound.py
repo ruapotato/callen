@@ -62,6 +62,27 @@ def _sip(fn, *args, **kwargs):
     return _cmd_queue.submit(fn, *args, **kwargs).result(timeout=30)
 
 
+_SIP_ERROR_HINTS = {
+    403: "403 Forbidden (account rejected — check VoIP.ms SIP password/subaccount)",
+    404: "404 Not Found (bad destination number)",
+    408: "408 Request Timeout (network between Callen and VoIP.ms)",
+    480: "480 Temporarily Unavailable (destination offline or DND)",
+    486: "486 Busy Here (destination busy)",
+    500: "500 Server Internal Error (VoIP.ms-side fault)",
+    503: "503 Service Unavailable (VoIP.ms outbound temporarily refused — usually transient or caller-id/balance)",
+    603: "603 Declined (destination rejected the call)",
+}
+
+
+def _human_sip_error(code: int, reason: str) -> str:
+    hint = _SIP_ERROR_HINTS.get(code)
+    if hint:
+        return hint
+    if reason:
+        return f"{code} {reason}"
+    return f"SIP {code}"
+
+
 def _place_outbound(destination: str, label: str) -> CallenCall | None:
     """Place an outbound SIP call. Returns the call object (not yet answered)."""
     def _do():
@@ -153,14 +174,28 @@ def _run_originate(incident_id: str, destination: str, display_name: str):
             time.sleep(0.2)
 
         if tech_call.state != CallState.ACTIVE:
-            log.info("[%s] Operator didn't answer the outbound-request call", incident_id)
-            try:
-                _sip(tech_call.hangup, pj.CallOpParam())
-            except Exception:
-                pass
+            # Distinguish carrier rejection (instant DISCONNECT with a
+            # SIP error code) from a real no-answer so the dashboard
+            # shows what actually happened instead of blaming the
+            # operator.
+            code = getattr(tech_call, "last_status_code", 0)
+            reason = getattr(tech_call, "last_reason", "") or ""
+            if tech_call.state == CallState.DISCONNECTED and code >= 400 and code != 487:
+                human = _human_sip_error(code, reason)
+                log.warning("[%s] Outbound leg to operator rejected by carrier: %s",
+                            incident_id, human)
+                note = f"Outbound failed: carrier returned {human}. Operator cell was never rung."
+            else:
+                log.info("[%s] Operator didn't answer the outbound-request call", incident_id)
+                note = "Outbound cancelled: operator did not answer"
+            if tech_call.state != CallState.DISCONNECTED:
+                try:
+                    _sip(tech_call.hangup, pj.CallOpParam())
+                except Exception:
+                    pass
             _db.add_incident_entry(
                 incident_id, "note", author="system",
-                payload={"text": "Outbound cancelled: operator did not answer"},
+                payload={"text": note},
             )
             return
 
@@ -220,14 +255,25 @@ def _run_originate(incident_id: str, destination: str, display_name: str):
             time.sleep(0.2)
 
         if contact_call.state != CallState.ACTIVE:
-            api.say(tech_call, "The contact did not answer.", repeat=False)
-            try:
-                _sip(contact_call.hangup, pj.CallOpParam())
-            except Exception:
-                pass
+            code = getattr(contact_call, "last_status_code", 0)
+            reason = getattr(contact_call, "last_reason", "") or ""
+            if contact_call.state == CallState.DISCONNECTED and code >= 400 and code != 487:
+                human = _human_sip_error(code, reason)
+                api.say(tech_call,
+                        "The carrier refused the call. Please try again later.",
+                        repeat=False)
+                note = f"Outbound failed: carrier returned {human} on leg to {clean_dest}"
+            else:
+                api.say(tech_call, "The contact did not answer.", repeat=False)
+                note = f"Outbound: contact {clean_dest} did not answer"
+            if contact_call.state != CallState.DISCONNECTED:
+                try:
+                    _sip(contact_call.hangup, pj.CallOpParam())
+                except Exception:
+                    pass
             _db.add_incident_entry(
                 incident_id, "note", author="system",
-                payload={"text": f"Outbound: contact {clean_dest} did not answer"},
+                payload={"text": note},
             )
             return
 

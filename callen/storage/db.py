@@ -710,6 +710,105 @@ class Database:
         )
         self._conn().commit()
 
+    def remove_contact_phone(self, contact_id: str, e164: str) -> bool:
+        conn = self._conn()
+        cur = conn.execute(
+            "DELETE FROM contact_phones WHERE contact_id = ? AND e164 = ?",
+            (contact_id, e164),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+    def remove_contact_email(self, contact_id: str, address: str) -> bool:
+        conn = self._conn()
+        cur = conn.execute(
+            "DELETE FROM contact_emails WHERE contact_id = ? AND address = ?",
+            (contact_id, address.lower()),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+    def rename_contact_phone(self, contact_id: str, old_e164: str, new_e164: str) -> bool:
+        conn = self._conn()
+        row = conn.execute(
+            "SELECT contact_id FROM contact_phones WHERE e164 = ?", (new_e164,),
+        ).fetchone()
+        if row and row["contact_id"] != contact_id:
+            return False
+        cur = conn.execute(
+            "UPDATE contact_phones SET e164 = ? WHERE contact_id = ? AND e164 = ?",
+            (new_e164, contact_id, old_e164),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+    def rename_contact_email(self, contact_id: str, old_addr: str, new_addr: str) -> bool:
+        conn = self._conn()
+        new_addr = new_addr.lower()
+        row = conn.execute(
+            "SELECT contact_id FROM contact_emails WHERE address = ?", (new_addr,),
+        ).fetchone()
+        if row and row["contact_id"] != contact_id:
+            return False
+        cur = conn.execute(
+            "UPDATE contact_emails SET address = ? WHERE contact_id = ? AND address = ?",
+            (new_addr, contact_id, old_addr.lower()),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+    def delete_contact(self, contact_id: str, cascade: bool = False) -> dict:
+        """Delete a contact. With cascade=True also deletes every incident
+        attached to the contact (entries, todos, linked call/email rows
+        detached). Without cascade, fails if any incident is still linked.
+        Returns a summary dict of what was removed."""
+        conn = self._conn()
+        if not conn.execute(
+            "SELECT 1 FROM contacts WHERE id = ?", (contact_id,)
+        ).fetchone():
+            return {"error": "not found"}
+
+        inc_ids = [
+            r["id"] for r in conn.execute(
+                "SELECT id FROM incidents WHERE contact_id = ?", (contact_id,)
+            ).fetchall()
+        ]
+        if inc_ids and not cascade:
+            return {"error": "contact has incidents", "incidents": inc_ids}
+
+        removed_incidents = 0
+        for inc_id in inc_ids:
+            self.delete_incident(inc_id)
+            removed_incidents += 1
+
+        conn.execute("DELETE FROM contact_phones WHERE contact_id = ?", (contact_id,))
+        conn.execute("DELETE FROM contact_emails WHERE contact_id = ?", (contact_id,))
+        conn.execute("DELETE FROM contacts WHERE id = ?", (contact_id,))
+        conn.commit()
+        return {"deleted": contact_id, "removed_incidents": removed_incidents}
+
+    def reassign_incident(self, incident_id: str, new_contact_id: str) -> bool:
+        """Move an incident (and its calls + emails) to a different contact."""
+        conn = self._conn()
+        if not conn.execute(
+            "SELECT 1 FROM incidents WHERE id = ?", (incident_id,)
+        ).fetchone():
+            return False
+        if not conn.execute(
+            "SELECT 1 FROM contacts WHERE id = ?", (new_contact_id,)
+        ).fetchone():
+            return False
+        conn.execute(
+            "UPDATE incidents SET contact_id = ?, updated_at = ? WHERE id = ?",
+            (new_contact_id, time.time(), incident_id),
+        )
+        conn.commit()
+        self.add_incident_entry(
+            incident_id, "note", author="system",
+            payload={"text": f"Reassigned to contact {new_contact_id}"},
+        )
+        return True
+
     def set_contact_trust(self, contact_id: str, trust_level: str) -> bool:
         """Set a contact's trust_level. Valid values: unverified, verified, suspect."""
         if trust_level not in ("unverified", "verified", "suspect"):

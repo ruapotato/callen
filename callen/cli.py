@@ -484,6 +484,62 @@ def cmd_add_email(args):
     _out(db.get_contact(args.contact_id), pretty=args.pretty)
 
 
+# --- Remove / rename phone or email ---
+
+
+def cmd_remove_phone(args):
+    db = _db(args)
+    from callen.storage.db import normalize_phone
+    e164 = normalize_phone(args.phone) or args.phone
+    if not db.remove_contact_phone(args.contact_id, e164):
+        _err(f"{e164} not attached to {args.contact_id}")
+    _out(db.get_contact(args.contact_id), pretty=args.pretty)
+
+
+def cmd_remove_email(args):
+    db = _db(args)
+    if not db.remove_contact_email(args.contact_id, args.email):
+        _err(f"{args.email} not attached to {args.contact_id}")
+    _out(db.get_contact(args.contact_id), pretty=args.pretty)
+
+
+def cmd_rename_phone(args):
+    db = _db(args)
+    from callen.storage.db import normalize_phone
+    new_e164 = normalize_phone(args.new_phone) or args.new_phone
+    if not db.rename_contact_phone(args.contact_id, args.old_phone, new_e164):
+        _err(f"could not rename {args.old_phone} -> {new_e164} on {args.contact_id} (not found or conflict)")
+    _out(db.get_contact(args.contact_id), pretty=args.pretty)
+
+
+def cmd_rename_email(args):
+    db = _db(args)
+    if not db.rename_contact_email(args.contact_id, args.old_email, args.new_email):
+        _err(f"could not rename {args.old_email} -> {args.new_email} on {args.contact_id}")
+    _out(db.get_contact(args.contact_id), pretty=args.pretty)
+
+
+def cmd_delete_contact(args):
+    db = _db(args)
+    result = db.delete_contact(args.contact_id, cascade=args.cascade)
+    if result.get("error") == "not found":
+        _err(f"contact {args.contact_id} not found")
+    if result.get("error") == "contact has incidents":
+        _err(
+            f"contact has {len(result['incidents'])} incident(s); "
+            f"re-run with --cascade to delete them too, or reassign them first",
+            code=1,
+        )
+    _out(result, pretty=args.pretty)
+
+
+def cmd_reassign_incident(args):
+    db = _db(args)
+    if not db.reassign_incident(args.incident_id, args.contact):
+        _err(f"could not reassign {args.incident_id} -> {args.contact} (not found)")
+    _out(db.get_incident(args.incident_id), pretty=args.pretty)
+
+
 # --- Search ---
 
 
@@ -1197,6 +1253,38 @@ def build_parser() -> argparse.ArgumentParser:
     pp.add_argument("contact_id")
     pp.add_argument("email")
     pp.set_defaults(func=cmd_add_email)
+
+    pp = sub.add_parser("remove-phone", help="Detach a phone number from a contact")
+    pp.add_argument("contact_id")
+    pp.add_argument("phone")
+    pp.set_defaults(func=cmd_remove_phone)
+
+    pp = sub.add_parser("remove-email", help="Detach an email address from a contact")
+    pp.add_argument("contact_id")
+    pp.add_argument("email")
+    pp.set_defaults(func=cmd_remove_email)
+
+    pp = sub.add_parser("rename-phone", help="Rewrite a phone entry on a contact (e.g. fix a placeholder)")
+    pp.add_argument("contact_id")
+    pp.add_argument("old_phone", help="current value to replace")
+    pp.add_argument("new_phone", help="new value")
+    pp.set_defaults(func=cmd_rename_phone)
+
+    pp = sub.add_parser("rename-email", help="Rewrite an email entry on a contact")
+    pp.add_argument("contact_id")
+    pp.add_argument("old_email")
+    pp.add_argument("new_email")
+    pp.set_defaults(func=cmd_rename_email)
+
+    pp = sub.add_parser("delete-contact", help="Delete a contact; use --cascade to also delete all its incidents")
+    pp.add_argument("contact_id")
+    pp.add_argument("--cascade", action="store_true", help="also delete every incident attached to this contact")
+    pp.set_defaults(func=cmd_delete_contact)
+
+    pp = sub.add_parser("reassign-incident", help="Move an incident to a different contact")
+    pp.add_argument("incident_id")
+    pp.add_argument("contact", help="destination contact id")
+    pp.set_defaults(func=cmd_reassign_incident)
 
     # search
     pp = sub.add_parser("search", help="Fuzzy search contacts and incidents")

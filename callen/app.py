@@ -104,8 +104,20 @@ def main(config_path: str = "config.toml"):
                 call.block_reason = ""
 
             # Remember if this phone has already consented — the IVR script
-            # can skip the consent gate for returning callers.
-            call.prior_consent = db.phone_has_consent(e164)
+            # can skip the consent gate for returning callers. Anonymous /
+            # caller-ID-withheld callers ALWAYS hit the full consent gate,
+            # since we have no way to verify who is on the other end.
+            raw_cid = (call.caller_id or "").strip().lower()
+            is_anon = (
+                not e164
+                or len(e164) < 7  # not a real phone number
+                or any(s in raw_cid for s in (
+                    "anonymous", "unknown", "restricted",
+                    "withheld", "private", "unavailable",
+                ))
+            )
+            call.is_anonymous = is_anon
+            call.prior_consent = False if is_anon else db.phone_has_consent(e164)
 
             # Create a fresh incident for this call
             incident_id = db.create_incident(
