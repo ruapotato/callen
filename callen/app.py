@@ -65,7 +65,7 @@ def main(config_path: str = "config.toml"):
             ended_at=call.ended_at,
             duration_seconds=call.duration,
             consented=call.consented_to_recording,
-            was_bridged=(call.state == CallState.BRIDGED),
+            was_bridged=getattr(call, "was_bridged", False) or (call.state == CallState.BRIDGED),
             state="active" if call.ended_at is None else "completed",
             incident_id=getattr(call, "incident_id", None),
             caller_recording_path=getattr(call, "caller_recording_path", None),
@@ -149,21 +149,12 @@ def main(config_path: str = "config.toml"):
                     db.record_phone_consent(call.normalized_phone, source="ivr")
                 except Exception:
                     log.exception("Failed to record phone consent")
-            # If the call was successfully bridged (operator answered and
-            # spoke with the caller), auto-close the incident. The operator
-            # handled it live, so it shouldn't sit in the open-ticket queue.
-            # The incident row remains for call history / transcript access.
-            incident_id = getattr(call, "incident_id", None)
-            was_bridged = (call.state == CallState.BRIDGED) or getattr(call, "was_bridged", False)
-            if incident_id and was_bridged:
-                try:
-                    db.update_incident(incident_id, status="closed")
-                    db.add_incident_entry(
-                        incident_id, "note", author="system",
-                        payload={"text": "Auto-closed: call answered live by operator."},
-                    )
-                except Exception:
-                    log.exception("Failed to auto-close incident %s", incident_id)
+            # NOTE: we do NOT auto-close bridged calls. The right
+            # signal for "should this be an open ticket" is the CONTENT
+            # of the call (real tech issue → keep open; test call /
+            # marketing / unrelated → close), not whether a human
+            # picked up. That decision is made by the agent's
+            # post-call autonomous review in the system prompt.
 
     event_bus.subscribe("call.incoming", on_call_incoming)
     event_bus.subscribe("call.ended", on_call_ended)

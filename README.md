@@ -148,9 +148,11 @@ requests.
   includes a short, pressure-free pointer to
   [freesoftware.support/support.html](https://freesoftware.support/support.html).
   Skipped on clarifying replies, frustrated users, and repeat donors.
-- Auto-close on bridged calls: calls the operator answers live are
-  closed automatically on hang-up so only voicemails and missed calls
-  stay in the open queue
+- Content-based triage on post-call review: the autonomous agent
+  reviews every call transcript and closes tickets that were test
+  calls, marketing, wrong numbers, or otherwise not tech support.
+  Real support requests stay open with todos, regardless of whether
+  the operator answered live.
 - Consent-first: no substantive support is given until the contact
   has explicitly consented. For phone that's the IVR press-1; for
   email that's a reply containing "I consent" / "yes".

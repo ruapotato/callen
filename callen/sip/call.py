@@ -42,6 +42,11 @@ class CallenCall(pj.Call):
         self._audio_media: pj.AudioMedia | None = None
         self.last_status_code: int = 0
         self.last_reason: str = ""
+        # Sticky: set True the moment the bridge is established. Stays
+        # True through DISCONNECTED so downstream handlers (incident
+        # auto-close, call record row) can tell whether this call was
+        # ever actually bridged.
+        self.was_bridged: bool = False
 
     def set_callbacks(self, on_state_change=None, on_media_ready=None):
         self._on_state_change = on_state_change

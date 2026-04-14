@@ -310,6 +310,8 @@ def _run_originate(incident_id: str, destination: str, display_name: str):
             return
 
         _sip(br.connect_calls, caller_media, tech_media)
+        contact_call.was_bridged = True
+        tech_call.was_bridged = True
         log.info("[%s] Outbound call bridged", incident_id)
 
         _db.add_incident_entry(

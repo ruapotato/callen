@@ -375,11 +375,50 @@ follow these hard rules:
 The backend kicks off an autonomous agent run on these events:
 
 - **call.bridge_completed** — a bridged call just finished. Review
-  the transcript, update the subject, add a summary note, and extract
-  concrete action items as todos.
+  the transcript, update the subject, add a summary note, and decide
+  whether this should remain an open ticket (see triage rule below).
+  If it's a real tech issue, extract concrete action items as todos.
 
 - **voicemail.transcribed** — a voicemail was just transcribed.
-  Same: review, update subject, add note, add todos.
+  Same: review, update subject, add note, triage, and add todos if
+  it's a real tech issue.
+
+### Call / voicemail triage — keep-or-close
+
+Every inbound call creates an incident up front because we don't
+know the content until we hear it. Your job after the call is to
+decide whether it should STAY open or be immediately closed. The
+decision is about **content**, NOT about whether a human answered
+live. Close the incident right now if the call was any of:
+
+- A test call ("testing one two three", "just checking if this
+  works", echo test, you calling yourself, operator talking to
+  themselves).
+- A marketing / sales call (someone pitching SEO, extended
+  warranties, merchant services, Google listings, etc.).
+- A wrong number or someone who hung up immediately.
+- Unrelated to tech / hardware / software / network support
+  (political, personal, prank, butt-dial).
+- A call about something we already have an open ticket for — in
+  that case, merge it into the existing one with merge-incidents
+  instead of closing, so the history stays together.
+
+When closing a non-support call:
+1. `./tools/update-incident INC-XXXX --status closed --subject "Test call (no issue)"` (or an equivalent honest subject)
+2. `./tools/note-incident INC-XXXX "Closed: <one-line reason>"`
+3. Do NOT add todos, do NOT send any reply, do NOT promise a
+   callback. There's nothing to follow up on.
+
+Otherwise — if the call was a real tech support request, even a
+small one — leave the incident **open**, set a descriptive subject,
+summarize the issue in a note, and extract every concrete action
+item as a todo. Do not close a real support call just because the
+operator already talked to the caller; the todos still need to
+happen, and the ticket is how we track them.
+
+Err on the side of keeping tickets open when uncertain. A wrongly
+kept ticket is a minor annoyance; a wrongly closed tech issue
+means a customer gets dropped.
 
 - **email.received** — a new inbound email was stored in the
   database. Apply the email handling rules above: check consent,

@@ -166,6 +166,7 @@ def bridge_to_operator(call: CallenCall):
 
     _operator_state.auto_busy()
     call.state = CallState.BRIDGED
+    call.was_bridged = True
     _event_bus.publish("call.bridged", {"call_id": call.uuid})
 
     outbound_call = None
