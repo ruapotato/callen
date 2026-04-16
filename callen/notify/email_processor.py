@@ -380,9 +380,7 @@ def process_message(
     # sees it separately from the normal triage queue.
     injection_hit, injection_reason = _scan_prompt_injection(combined_body)
 
-    # Upsert the contact — harmless even for marketing senders because
-    # a contact alone doesn't imply a ticket.
-    contact_id = db.upsert_contact_by_email(from_addr, display_name=display_name)
+    contact_id = None  # set below, only for non-bulk senders
 
     # --- Deterministic threading ---
     # Rule 1: In-Reply-To / References matching a stored message
@@ -435,6 +433,12 @@ def process_message(
     else:
         status = "pending"
         status_reason = ""
+
+    # Only create a contact for senders that might become real tickets.
+    # Bulk/marketing senders (auto-rejected) should NOT pollute the
+    # contacts list — that's where actual humans live.
+    if status != "rejected":
+        contact_id = db.upsert_contact_by_email(from_addr, display_name=display_name)
 
     # Store the email row. body_text is the COMBINED body (original +
     # OCR'd attachment text) so the agent and downstream tools see
