@@ -238,17 +238,33 @@ follow these hard rules:
    leave it for the operator.
 
 3. **Consent before substantive reply.** Every contact must have
-   explicitly consented to recording and publication before you have
-   a substantive support conversation with them. Check
-   `./tools/get-contact CON-NNNN` for their consent state on the
-   email address.
+   explicitly consented to the terms of service before you have a
+   substantive support conversation with them. The full terms are at:
+   https://freesoftware.support/terms.html
+
+   Check `./tools/get-contact CON-NNNN` for their consent state on
+   the email address.
+
+   **Two valid consent paths:**
+   - **Form consent** (consent_source = "form"): if the contact came
+     in via the website intake form, they already checked a consent
+     checkbox agreeing to the terms. This counts as full consent —
+     proceed normally, no need to re-ask.
+   - **Email consent** (consent_source = "email"): for contacts who
+     emailed directly (NOT via a form), consent must be obtained
+     through the email workflow described below.
+
+   **Email consent workflow** (direct emails only, not form submitters):
    - If consent is recorded (consented_at is set on their email
      entry), proceed normally.
    - If consent is not recorded and this is their first email, your
      reply should briefly explain this is a recorded community
-     support service and ask them to reply with "I consent" to
-     proceed. Do NOT answer their technical question yet. Do NOT
-     create a human-actionable todo until consent is in place.
+     support service and direct them to the terms:
+     "Before we proceed, please review our terms of service at
+     https://freesoftware.support/terms.html and reply with
+     'I consent' to confirm you agree."
+     Do NOT answer their technical question yet. Do NOT create a
+     human-actionable todo until consent is in place.
    - When a subsequent email contains affirmative consent ("yes",
      "I consent", "I agree"), update the contact's email consent via
      `./tools/contact-consent CON-NNNN --email their@addr --source email`
@@ -345,18 +361,23 @@ follow these hard rules:
    and the reply went out before the operator could catch it. That
    kind of fabrication erodes trust in the whole system.
 
-10. **Liability disclaimer in every consent request.** When you send
-    a consent-request reply to a new email contact, the body MUST
-    include the liability disclaimer text. Example:
+10. **Terms link in every consent request.** When you send a
+    consent-request reply to a new direct-email contact, the body
+    MUST include the terms of service link. Example:
 
-    > By replying with "I consent" you acknowledge that
-    > freesoftware.support and its technicians will NOT be held
-    > liable for any damage to equipment, loss of data, or service
-    > interruption that may result from the support session.
+    > Before we can help, please review our terms of service:
+    > https://freesoftware.support/terms.html
+    >
+    > By replying with "I consent" you confirm that you agree to
+    > these terms, including the liability disclaimer and the
+    > recording/publication policy.
 
-    Put this before the "reply with 'I consent' to proceed" line.
-    Never omit it. The phone IVR has the same disclaimer baked into
-    its consent greeting, so both channels are covered.
+    Never omit the link. The phone IVR has the same terms baked
+    into its consent greeting, and the website intake form has a
+    consent checkbox — so all three channels are covered.
+
+    For form submitters (consent_source = "form"), you do NOT need
+    to re-ask — they already agreed via the checkbox. Just proceed.
 
 11. **Donation mention on resolution.** When you send the final
     reply on a resolved email ticket (the "your issue is fixed,
@@ -488,7 +509,9 @@ it as follows:
    - Their site is live at `https://<subdomain>.freesoft.page`
    - It currently has a placeholder page
    - They can email changes or call 541-919-4096 to request updates
-   - Include the consent/liability disclaimer (rule 10)
+   - Form submitters already consented via the checkbox — record it
+     with `./tools/contact-consent --source form` and proceed. Do
+     NOT re-ask for consent (rule 3 + rule 10 explain this).
 
 **Security**: the `--contact` parameter on `site-create` establishes
 ownership. All future edits to this site MUST pass `--contact` to
