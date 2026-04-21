@@ -200,57 +200,55 @@ class SiteManager:
         return base64.b64encode(text.encode()).decode()
 
     def _upsert_file_binary(self, repo_full: str, path: str, content_bytes: bytes, message: str):
-        """Create or update a binary file in a GitHub repo."""
+        """Create or update a binary file in a GitHub repo.
+
+        Uses a temp JSON file + --input to avoid 'Argument list too long'
+        errors when base64-encoded content exceeds the OS arg limit (~2MB).
+        """
         import base64
-        sha_args = []
+        import tempfile
+        import os
+
+        sha = None
         try:
             result = self._gh(
                 "api", f"repos/{repo_full}/contents/{path}",
                 "--jq", ".sha",
             )
-            sha = result.stdout.strip()
-            if sha:
-                sha_args = ["--field", f"sha={sha}"]
+            sha = result.stdout.strip() or None
         except RuntimeError:
             pass
 
         b64_content = base64.b64encode(content_bytes).decode()
+        payload = {"message": message, "content": b64_content}
+        if sha:
+            payload["sha"] = sha
+
+        # Write JSON payload to a temp file so gh reads from --input
+        # instead of receiving the entire base64 blob on the command line.
+        tmp = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False,
+        )
         try:
-            self._gh(
-                "api", f"repos/{repo_full}/contents/{path}",
-                "--method", "PUT",
-                "--field", f"message={message}",
-                "--field", f"content={b64_content}",
-                *sha_args,
+            json.dump(payload, tmp)
+            tmp.close()
+            result = subprocess.run(
+                [
+                    "gh", "api", f"repos/{repo_full}/contents/{path}",
+                    "--method", "PUT",
+                    "--input", tmp.name,
+                ],
+                capture_output=True, text=True, timeout=120,
             )
-        except RuntimeError:
-            log.warning("Failed to upsert binary %s in %s", path, repo_full)
+            if result.returncode != 0:
+                log.warning("Failed to upsert binary %s in %s: %s",
+                            path, repo_full, result.stderr[:300])
+        finally:
+            os.unlink(tmp.name)
 
     def _upsert_file(self, repo_full: str, path: str, content: str, message: str):
-        """Create or update a file in a GitHub repo (handles SHA for updates)."""
-        # Check if file already exists to get its SHA
-        sha_args = []
-        try:
-            result = self._gh(
-                "api", f"repos/{repo_full}/contents/{path}",
-                "--jq", ".sha",
-            )
-            sha = result.stdout.strip()
-            if sha:
-                sha_args = ["--field", f"sha={sha}"]
-        except RuntimeError:
-            pass  # file doesn't exist yet, that's fine
-
-        try:
-            self._gh(
-                "api", f"repos/{repo_full}/contents/{path}",
-                "--method", "PUT",
-                "--field", f"message={message}",
-                "--field", f"content={self._b64(content)}",
-                *sha_args,
-            )
-        except RuntimeError:
-            log.warning("Failed to upsert %s in %s", path, repo_full)
+        """Create or update a text file in a GitHub repo."""
+        self._upsert_file_binary(repo_full, path, content.encode(), message)
 
     def list_repos(self) -> list[dict]:
         """List repos in the org/user."""
