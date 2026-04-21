@@ -46,6 +46,29 @@ def _err(msg: str, code: int = 1):
     sys.exit(code)
 
 
+MAX_BODY = 8000  # chars — enough for any real email, caps runaway HTML
+
+
+def _truncate_email_bodies(em: dict):
+    """Keep email output manageable for the agent. If body_text has
+    content, truncate body_html. If body_text is empty, fall back to
+    body_html but cap it. Cap body_text too if it's huge."""
+    text = em.get("body_text") or ""
+    html = em.get("body_html") or ""
+
+    if text:
+        # We have clean text — truncate the HTML duplicate
+        if len(html) > 2000:
+            em["body_html"] = f"(truncated — {len(html)} bytes; use body_text)"
+        if len(text) > MAX_BODY:
+            em["body_text"] = text[:MAX_BODY] + f"\n... (truncated at {MAX_BODY} chars of {len(text)})"
+    elif html:
+        # No text version — keep HTML but cap it
+        if len(html) > MAX_BODY:
+            em["body_html"] = html[:MAX_BODY] + f"\n... (truncated at {MAX_BODY} chars of {len(html)})"
+    # else: both empty, nothing to do
+
+
 def _db(args) -> Database:
     config = load_config(args.config)
     db = Database(config.general.db_path)
@@ -107,6 +130,8 @@ def cmd_get_incident(args):
     inc["todos"] = db.list_todos(args.incident_id)
     if inc.get("contact_id"):
         inc["contact"] = db.get_contact(inc["contact_id"])
+    for em in inc.get("emails", []):
+        _truncate_email_bodies(em)
     _out(inc, pretty=args.pretty)
 
 
@@ -941,6 +966,11 @@ def cmd_get_email(args):
     if not em:
         _err(f"email not found: {args.email_id}")
     em["attachments"] = db.list_email_attachments(args.email_id)
+    # Keep output manageable for the agent. If body_text has content,
+    # truncate body_html (it's usually a styled duplicate). If body_text
+    # is empty, fall back to body_html but cap it. Cap body_text too if
+    # it's absurdly long.
+    _truncate_email_bodies(em)
     _out(em, pretty=args.pretty)
 
 
