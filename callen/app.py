@@ -461,7 +461,14 @@ def main(config_path: str = "config.toml"):
         # intent-aware second layer: a small local model sees the
         # email and returns structured booleans. The Claude agent
         # only gets emails that pass this gate.
-        if preflight.enabled:
+        #
+        # Skip preflight for whitelisted form relay domains — their
+        # submissions are structured data, not natural-language emails,
+        # and Mistral consistently misclassifies them as ambiguous.
+        PREFLIGHT_SKIP_DOMAINS = {"formspree.io"}
+        from_addr_pf = (em.get("from_addr") or "").lower()
+        skip_preflight = any(from_addr_pf.endswith(f"@{d}") for d in PREFLIGHT_SKIP_DOMAINS)
+        if preflight.enabled and not skip_preflight:
             try:
                 classification = preflight.classify_email(
                     from_addr=em.get("from_addr", ""),
