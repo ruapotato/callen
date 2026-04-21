@@ -7,29 +7,28 @@
 # This file defines the IVR call flow.
 # Edit this file to customize how Callen handles incoming calls.
 #
-# Available functions (injected by the engine — no imports needed):
-#   say(call, text, repeat=True)       — TTS to caller (loops if repeat=True)
-#   play(call, wav_path)               — Play pre-recorded audio
-#   dtmf(call, count=1, timeout=10)    — Wait for DTMF, returns str or None
-#   bridge_to_operator(call)           — Connect caller to operator's phone
-#   record_voicemail(call, prompt=None) — Record voicemail + email notification
-#   hangup(call)                       — End the call
-#   caller_id(call)                    — Get caller's phone number
-#   operator_available()               — Check if operator is available
-#   has_consented(call)                — True if this number already consented
+# Available functions (injected by the engine, no imports needed):
+#   say(call, text, repeat=True)       - TTS to caller (loops if repeat=True)
+#   play(call, wav_path)               - Play pre-recorded audio
+#   dtmf(call, count=1, timeout=10)    - Wait for DTMF, returns str or None
+#   bridge_to_operator(call)           - Connect caller to operator's phone
+#   record_voicemail(call, prompt=None) - Record voicemail + email notification
+#   hangup(call)                       - End the call
+#   caller_id(call)                    - Get caller's phone number
+#   operator_available()               - Check if operator is available
+#   has_consented(call)                - True if this number already consented
+#   has_website(call)                  - True if caller has a managed site
+#   get_website_url(call)              - Returns the caller's site URL
 
 
 def IVR(call):
-    # Hard block — if this number is on the quarantine list, hang up
-    # immediately. No greeting, no menu, no agent exposure.
+    # Hard block: quarantined numbers get no interaction at all.
     if is_blocked(call):
         hangup(call)
         return
 
-    # Recording consent — required before anything else.
-    # Returning callers who already agreed on a prior call skip the gate
-    # but are reminded that the call is still being recorded AND that the
-    # liability disclaimer still applies.
+    # Recording consent: required before anything else.
+    # Returning callers who already agreed skip the gate but hear a reminder.
     if has_consented(call):
         say(call, (
             "Welcome back to free software support. "
@@ -58,11 +57,20 @@ def IVR(call):
 
         call.consented_to_recording = True
 
-    # Main menu
-    say(call, (
-        "Press 1 to speak with a technician. "
-        "Press 2 to leave a voicemail."
-    ))
+    # Main menu: dynamically include option 3 if caller has a website.
+    caller_has_site = has_website(call)
+
+    if caller_has_site:
+        say(call, (
+            "Press 1 to speak with a technician. "
+            "Press 2 to leave a voicemail. "
+            "Press 3 to request changes to your website."
+        ))
+    else:
+        say(call, (
+            "Press 1 to speak with a technician. "
+            "Press 2 to leave a voicemail."
+        ))
 
     while True:
         key = dtmf(call, count=1, timeout=10)
@@ -73,8 +81,32 @@ def IVR(call):
         elif key == '2':
             record_voicemail(call)
             return
+        elif key == '3' and caller_has_site:
+            _website_update_flow(call)
+            return
         elif key is None:
             return
         else:
             say(call, "Invalid option.", repeat=False)
-            say(call, "Press 1 for a technician, or 2 for voicemail.")
+            if caller_has_site:
+                say(call, "Press 1 for a technician, 2 for voicemail, or 3 for website changes.")
+            else:
+                say(call, "Press 1 for a technician, or 2 for voicemail.")
+
+
+def _website_update_flow(call):
+    """Record verbal website change instructions as a voicemail."""
+    site_url = get_website_url(call)
+    say(call, (
+        "Please describe the changes you would like made to your website "
+        "after the beep. Include as much detail as you can. "
+        "For example: update my phone number, add a new photo, "
+        "change the hours, or add a new section. "
+        "When you are finished, press pound. "
+        "We will get those changes implemented and send you an email "
+        "when everything is updated."
+    ), repeat=False)
+    record_voicemail(
+        call,
+        prompt="Go ahead and describe your website changes now.",
+    )

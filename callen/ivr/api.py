@@ -374,6 +374,32 @@ def has_consented(call: CallenCall) -> bool:
     return bool(getattr(call, "prior_consent", False))
 
 
+def has_website(call: CallenCall) -> bool:
+    """True if this caller's contact has a managed website on file."""
+    contact_id = getattr(call, "contact_id", None)
+    if not contact_id or not _db:
+        return False
+    try:
+        sites = _db.get_sites_by_contact(contact_id)
+        return len(sites) > 0
+    except Exception:
+        return False
+
+
+def get_website_url(call: CallenCall) -> str:
+    """Return the caller's site URL, or empty string if none."""
+    contact_id = getattr(call, "contact_id", None)
+    if not contact_id or not _db:
+        return ""
+    try:
+        sites = _db.get_sites_by_contact(contact_id)
+        if sites:
+            return f"https://{sites[0]['fqdn']}"
+    except Exception:
+        pass
+    return ""
+
+
 def is_blocked(call: CallenCall) -> bool:
     """True if this caller's phone number is on the hard block list.
     The IVR script should hang up immediately on any blocked caller

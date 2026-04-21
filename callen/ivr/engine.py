@@ -116,6 +116,8 @@ class IVREngine:
             "operator_available": api.operator_available,
             "has_consented": api.has_consented,
             "is_blocked": api.is_blocked,
+            "has_website": api.has_website,
+            "get_website_url": api.get_website_url,
         }
 
         try:
