@@ -643,6 +643,24 @@ def cmd_site_edit(args):
     }, pretty=args.pretty)
 
 
+def cmd_site_upload_video(args):
+    db, mgr = _site_db_and_manager(args)
+    _require_site_ownership(db, args.contact, args.subdomain)
+    from callen.sites.video import process_and_upload_video
+    result = process_and_upload_video(
+        video_path=args.video,
+        site_subdomain=args.subdomain,
+        manager=mgr,
+        dest_path=args.dest,
+        max_height=args.max_height,
+        crf=args.crf,
+        strip_audio=args.strip_audio,
+        max_duration=args.max_duration,
+        commit_message=args.message or f"Upload video {args.video}",
+    )
+    _out(result, pretty=args.pretty)
+
+
 def cmd_site_upload_image(args):
     db, mgr = _site_db_and_manager(args)
     _require_site_ownership(db, args.contact, args.subdomain)
@@ -1570,6 +1588,18 @@ def build_parser() -> argparse.ArgumentParser:
     pp = sub.add_parser("site-get", help="Show details for a managed website")
     pp.add_argument("subdomain")
     pp.set_defaults(func=cmd_site_get)
+
+    pp = sub.add_parser("site-upload-video", help="Transcode and upload a video to a managed site (H.264, max 720p)")
+    pp.add_argument("subdomain")
+    pp.add_argument("video", help="local path to video file")
+    pp.add_argument("--contact", required=True, help="contact ID for ownership check")
+    pp.add_argument("--dest", help="destination path in repo (default: videos/<filename>.mp4)")
+    pp.add_argument("--message", "-m", help="commit message")
+    pp.add_argument("--max-height", type=int, default=720, help="max vertical resolution (default: 720)")
+    pp.add_argument("--crf", type=int, default=28, help="quality (18=high, 28=default, 35=small)")
+    pp.add_argument("--strip-audio", action="store_true", help="remove audio track")
+    pp.add_argument("--max-duration", type=int, default=120, help="max seconds (default: 120)")
+    pp.set_defaults(func=cmd_site_upload_video)
 
     pp = sub.add_parser("site-upload-image", help="Process and upload an image to a managed site")
     pp.add_argument("subdomain")

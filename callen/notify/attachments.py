@@ -26,7 +26,7 @@ log = logging.getLogger(__name__)
 ATTACHMENT_DIR = Path("./attachments")
 
 # Hard limits so a malicious attachment can't exhaust disk or OCR workers
-MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024  # 20 MB per file
+MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024  # 50 MB per file (video attachments can be large)
 MAX_EXTRACT_BYTES = 5 * 1024 * 1024       # Skip OCR on files > 5 MB
 MAX_EXTRACTED_CHARS = 20_000              # Truncate OCR output
 
@@ -36,6 +36,12 @@ IMAGE_CONTENT_TYPES = {
 }
 
 PDF_CONTENT_TYPES = {"application/pdf", "application/x-pdf"}
+
+VIDEO_CONTENT_TYPES = {
+    "video/mp4", "video/quicktime", "video/x-msvideo", "video/webm",
+    "video/x-matroska", "video/mpeg", "video/3gpp", "video/x-m4v",
+    "video/avi",
+}
 
 TEXT_CONTENT_TYPES = {
     "text/plain", "text/csv", "text/html", "text/x-log",
@@ -186,6 +192,9 @@ def extract_attachments(
                 extracted_text, method = _extract_pdf(str(dest))
             elif content_type in TEXT_CONTENT_TYPES:
                 extracted_text, method = _extract_text_file(str(dest))
+            elif content_type in VIDEO_CONTENT_TYPES:
+                method = "video"
+                extracted_text = f"[Video attachment: {safe_name}, {size_bytes / 1024 / 1024:.1f}MB. Use ./tools/site-upload-video to process and push to a site.]"
         else:
             method = "skipped_too_large"
 

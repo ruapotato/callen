@@ -70,6 +70,7 @@ for a human-readable format where supported.
 ./tools/site-create <subdomain> --contact CON-0001        # create repo + DNS + Pages
 ./tools/site-edit <subdomain> index.html - --contact CON-0001 -m "..."  # push content (- = stdin)
 ./tools/site-upload-image <subdomain> /path/to/img --contact CON-0001   # process + push image
+./tools/site-upload-video <subdomain> /path/to/vid --contact CON-0001   # transcode to H.264 720p + push
 ./tools/site-get <subdomain>                              # show site details
 ./tools/site-list [--contact CON-0001]                    # list managed sites
 ./tools/site-delete <subdomain> --contact CON-0001        # tear down site
