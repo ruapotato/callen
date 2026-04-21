@@ -172,10 +172,71 @@ def _parse_address(header_value: str) -> tuple[str, str]:
     return display or "", (addr or "").lower()
 
 
+def _extract_formspree_fields(html_body: str) -> str:
+    """Parse Formspree's styled HTML email into clean field: value lines.
+
+    Returns a human-readable text version, or empty string on failure.
+    """
+    try:
+        class _Extractor(html.parser.HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.texts = []
+                self._skip = False
+            def handle_starttag(self, tag, attrs):
+                if tag in ('style', 'script'):
+                    self._skip = True
+            def handle_endtag(self, tag):
+                if tag in ('style', 'script'):
+                    self._skip = False
+            def handle_data(self, data):
+                if not self._skip:
+                    t = data.strip()
+                    if t:
+                        self.texts.append(t)
+
+        ext = _Extractor()
+        ext.feed(html_body)
+
+        # Formspree puts field names as standalone text nodes, followed by
+        # the value as the next text node. Collect sequential pairs where
+        # the "name" looks like a form field (lowercase, underscores).
+        pairs = []
+        i = 0
+        while i < len(ext.texts) - 1:
+            candidate = ext.texts[i]
+            if re.match(r'^[a-z][a-z0-9_]{1,30}$', candidate):
+                value = ext.texts[i + 1].strip()
+                pairs.append((candidate, value))
+                i += 2
+            else:
+                i += 1
+
+        if not pairs:
+            return ""
+
+        lines = ["[Form submission via Formspree]", ""]
+        for name, value in pairs:
+            label = name.replace("_", " ").title()
+            lines.append(f"{label}: {value}")
+        return "\n".join(lines)
+    except Exception:
+        log.exception("Failed to parse Formspree HTML")
+        return ""
+
+
 def _looks_like_bulk(msg: email.message.Message) -> bool:
     """Cheap heuristic for marketing / list mail — the agent can still triage
     borderline cases, this just keeps us from re-sending consent requests
     on every newsletter."""
+    # Whitelisted form relay services — they often set List-Unsubscribe
+    # or Precedence headers but carry real user submissions.
+    from_addr = (_parse_address(msg.get("From", ""))[1] or "").lower()
+    form_relay_domains = {"formspree.io"}
+    sender_domain = from_addr.split("@", 1)[-1] if "@" in from_addr else ""
+    if sender_domain in form_relay_domains:
+        return False
+
     for hdr in ("List-Unsubscribe", "List-Id", "Precedence", "X-Mailer",
                 "Auto-Submitted"):
         v = msg.get(hdr, "")
@@ -293,10 +354,15 @@ def process_message(
         log.debug("Skipping our own outgoing message from %s", from_addr)
         return None
 
-    # Skip bounces / automated system mail
-    if any(s in from_addr for s in ("mailer-daemon", "postmaster", "no-reply", "noreply")):
-        log.info("Skipping system message from %s", from_addr)
-        return None
+    # Skip bounces / automated system mail — but whitelist known form
+    # relay services (Formspree, etc.) that use noreply@ addresses to
+    # forward legitimate form submissions.
+    FORM_RELAY_DOMAINS = {"formspree.io"}
+    sender_domain = from_addr.split("@", 1)[-1] if "@" in from_addr else ""
+    if sender_domain not in FORM_RELAY_DOMAINS:
+        if any(s in from_addr for s in ("mailer-daemon", "postmaster", "no-reply", "noreply")):
+            log.info("Skipping system message from %s", from_addr)
+            return None
 
     # Skip replies/bounces of our own lockout notice to avoid loops
     if subject.startswith(LOCKOUT_SUBJECT.split("]", 1)[0]) and LOCKOUT_SUBJECT in subject:
@@ -379,6 +445,16 @@ def process_message(
     # non-blocking; they just tag the email as 'flagged' so the operator
     # sees it separately from the normal triage queue.
     injection_hit, injection_reason = _scan_prompt_injection(combined_body)
+
+    # Formspree sends HTML-only emails with form data buried in styled
+    # tables. Extract the key-value pairs into clean readable text so the
+    # agent (and the DB body_text column) gets something useful instead of
+    # 60KB of CSS.
+    if sender_domain in FORM_RELAY_DOMAINS and html_body:
+        cleaned = _extract_formspree_fields(html_body)
+        if cleaned:
+            text_body = cleaned
+            combined_body = append_extracted_text_to_body(text_body, attachment_records)
 
     contact_id = None  # set below, only for non-bulk senders
 
