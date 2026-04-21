@@ -444,6 +444,29 @@ The backend kicks off an autonomous agent run on these events:
   Same: review, update subject, add note, triage, and add todos if
   it's a real tech issue.
 
+### Website change voicemails
+
+If a voicemail is on an incident labeled `website` (or the contact
+has a managed site on file), treat it as a website change request,
+not a general support voicemail. The caller used IVR option 3
+specifically to describe changes to their site.
+
+Your job is to **actually make the changes**, not just summarize:
+
+1. Read the transcript to understand what they want changed.
+2. Look up their site via `./tools/site-list --contact <id>`.
+3. Fetch the current page: `./tools/site-get <subdomain>`.
+4. Make the changes via `./tools/site-edit <subdomain> index.html`
+   with the updated HTML. Pass `--contact` for ownership.
+5. Send the contact an email confirming what was changed and
+   including their site URL so they can review.
+6. If the request is unclear or you need more info, send an email
+   asking for clarification instead of guessing.
+
+Do NOT just add a note and leave a todo. The whole point of option
+3 is that the caller describes what they want and it gets done
+without them having to follow up.
+
 ### Call / voicemail triage — keep-or-close
 
 Every inbound call creates an incident up front because we don't
