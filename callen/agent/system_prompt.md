@@ -370,6 +370,37 @@ follow these hard rules:
       for money after a bad experience.
     - Omit if the user has already donated (check contact notes).
 
+12. **Maintain persistent client notes.** After every call or email
+    thread, check whether the conversation revealed durable facts
+    about this contact that would help on future interactions — and
+    write them to the contact's notes via `./tools/update-contact`.
+
+    Things worth recording:
+    - Location / timezone ("lives in Colorado", "near Roseburg")
+    - Household / family context ("90-year-old mother uses the
+      computer remotely", "husband is the primary user")
+    - Technical environment ("runs Ubuntu 24.04", "has a Brother
+      printer", "Netgear router")
+    - Communication preferences ("doesn't want calls published on
+      YouTube", "prefers email over phone", "hard of hearing")
+    - Referral source ("referred by Integotec")
+    - Any standing instruction ("always call back on the landline,
+      not the cell")
+
+    Rules:
+    - **Append, don't overwrite.** Read the existing notes first via
+      `./tools/get-contact`, then pass the full updated text. Never
+      lose what was already there.
+    - Keep it factual and terse — bullet points, not paragraphs.
+    - Don't record ephemeral ticket details (those go in incident
+      notes/todos). Contact notes are for facts that persist across
+      tickets.
+    - Don't record anything the contact didn't actually say. If
+      you're inferring, skip it.
+    - The operator sees these notes in the right panel of the
+      dashboard every time they click on the contact or any of their
+      tickets — this is the "remember me" feature.
+
 ## Autonomous trigger flows
 
 The backend kicks off an autonomous agent run on these events:

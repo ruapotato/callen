@@ -119,7 +119,28 @@ def main(config_path: str = "config.toml"):
             call.is_anonymous = is_anon
             call.prior_consent = False if is_anon else db.phone_has_consent(e164)
 
-            # Create a fresh incident for this call
+            # DON'T create an incident yet — wait until the call ends
+            # and we know whether the caller actually engaged (consented,
+            # bridged, left a voicemail). Calls where someone hangs up
+            # during the consent prompt shouldn't produce open tickets.
+            call.incident_id = None
+            log.info("Call %s -> contact %s (prior_consent=%s)",
+                     call.uuid[:8], contact_id, call.prior_consent)
+        except Exception:
+            log.exception("Failed to bind call to contact/incident")
+
+        # Insert a stub call row so transcript_segments FK can reference it
+        _save_call_record(call)
+
+    def ensure_incident(call):
+        """Lazily create an incident for this call if one doesn't exist yet.
+        Called from bridge_to_operator, record_voicemail, and on_call_ended
+        so the ticket is available before any downstream event fires."""
+        if getattr(call, "incident_id", None):
+            return call.incident_id
+        contact_id = getattr(call, "contact_id", None)
+        e164 = getattr(call, "normalized_phone", call.caller_id)
+        try:
             incident_id = db.create_incident(
                 contact_id=contact_id,
                 subject=f"Call from {e164}",
@@ -131,30 +152,43 @@ def main(config_path: str = "config.toml"):
                 incident_id, "call", linked_call_id=call.uuid,
                 payload={"direction": "inbound", "caller_id": e164},
             )
-            log.info("Call %s -> contact %s, incident %s (prior_consent=%s)",
-                     call.uuid[:8], contact_id, incident_id, call.prior_consent)
+            _save_call_record(call)  # update the stub row with incident_id
+            log.info("Incident %s created for call %s", incident_id, call.uuid[:8])
+            return incident_id
         except Exception:
-            log.exception("Failed to bind call to contact/incident")
+            log.exception("Failed to create incident for call %s", call.uuid[:8])
+            return None
 
-        # Insert a stub call row so transcript_segments FK can reference it
-        _save_call_record(call)
+    # Expose ensure_incident to the IVR API so bridge_to_operator and
+    # record_voicemail can trigger it at the right moment.
+    api._ensure_incident = ensure_incident  # module-level var in api.py
 
     def on_call_ended(data):
         call = call_registry.get(data.get("call_id"))
-        if call:
-            _save_call_record(call)
-            # If the caller consented during the IVR, persist it on the contact
-            if getattr(call, "consented_to_recording", False) and getattr(call, "normalized_phone", ""):
-                try:
-                    db.record_phone_consent(call.normalized_phone, source="ivr")
-                except Exception:
-                    log.exception("Failed to record phone consent")
-            # NOTE: we do NOT auto-close bridged calls. The right
-            # signal for "should this be an open ticket" is the CONTENT
-            # of the call (real tech issue → keep open; test call /
-            # marketing / unrelated → close), not whether a human
-            # picked up. That decision is made by the agent's
-            # post-call autonomous review in the system prompt.
+        if not call:
+            return
+
+        # If the caller consented during the IVR, persist it on the contact
+        if getattr(call, "consented_to_recording", False) and getattr(call, "normalized_phone", ""):
+            try:
+                db.record_phone_consent(call.normalized_phone, source="ivr")
+            except Exception:
+                log.exception("Failed to record phone consent")
+
+        # Fallback: if bridge_to_operator or record_voicemail already
+        # created the incident via ensure_incident, this is a no-op.
+        # If somehow neither fired but the caller did consent, catch it.
+        consented = getattr(call, "consented_to_recording", False)
+        has_voicemail = bool(getattr(call, "voicemail_path", None))
+        was_bridged = getattr(call, "was_bridged", False)
+
+        if not getattr(call, "incident_id", None) and (consented or has_voicemail or was_bridged):
+            ensure_incident(call)
+        elif not getattr(call, "incident_id", None):
+            log.info("Call %s ended without engagement — no ticket created",
+                     call.uuid[:8])
+
+        _save_call_record(call)
 
     event_bus.subscribe("call.incoming", on_call_incoming)
     event_bus.subscribe("call.ended", on_call_ended)
@@ -345,7 +379,12 @@ def main(config_path: str = "config.toml"):
                 f"   set it on the contact via ./tools/update-contact (look up the contact id\n"
                 f"   via ./tools/get-incident). Do NOT update the name based on a trailing\n"
                 f"   fragment — see transcript-quality rules.\n"
-                f"6. If the call indicates urgency, bump priority to high.\n\n"
+                f"6. If the call indicates urgency, bump priority to high.\n"
+                f"7. Check for persistent client facts (location, family context, tech\n"
+                f"   environment, communication preferences, etc.) and APPEND them to the\n"
+                f"   contact's notes via ./tools/update-contact --notes. Read existing notes\n"
+                f"   first so you don't overwrite what's already there. See rule 12 in the\n"
+                f"   system prompt for what to record.\n\n"
                 f"Respond with one sentence describing what you changed and how many todos\n"
                 f"you created."
             )

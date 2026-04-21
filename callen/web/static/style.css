@@ -978,6 +978,21 @@ body {
 
 .hidden { display: none !important; }
 
+/* Contact notes in context panel */
+.contact-notes {
+    background: var(--accent-bg);
+    border: 1px solid var(--accent);
+    border-radius: var(--radius);
+    padding: 10px 12px;
+}
+.contact-notes h3 { color: var(--accent); font-size: 12px; margin-bottom: 6px; }
+.ctx-notes-body {
+    font-size: 13px;
+    color: var(--text);
+    line-height: 1.5;
+    white-space: pre-wrap;
+}
+
 /* Contact trust badges */
 .trust-badge {
     font-size: 11px;

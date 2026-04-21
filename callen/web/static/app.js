@@ -1026,6 +1026,13 @@ function renderContactContext(contact, incident) {
         ]),
     ]));
 
+    if (contact.notes) {
+        ctx.appendChild(el('div', { class: 'ctx-block contact-notes' }, [
+            el('h3', {}, 'Notes'),
+            el('div', { class: 'ctx-notes-body' }, contact.notes),
+        ]));
+    }
+
     if (contact.phones?.length) {
         const phones = el('div', { class: 'ctx-block' }, [el('h3', {}, 'Phones')]);
         for (const p of contact.phones) {

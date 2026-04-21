@@ -28,6 +28,7 @@ _config = None
 _db = None
 _make_outbound_call = None
 _transcription_mgr = None
+_ensure_incident = None  # set by app.py; creates an incident lazily on first call
 _active_taps: dict[str, list] = {}  # call_id -> [caller_tap, tech_tap]
 
 BUSY_VOICEMAIL_PROMPT = (
@@ -158,6 +159,11 @@ def bridge_to_operator(call: CallenCall):
     """Bridge the caller to the operator's cell phone."""
     from callen.sip import bridge as br
 
+    # Ensure an incident exists before we start bridging — the
+    # bridge_completed event needs incident_id for the agent review.
+    if _ensure_incident:
+        _ensure_incident(call)
+
     if not _operator_state.is_available:
         record_voicemail(call, prompt=BUSY_VOICEMAIL_PROMPT)
         return
@@ -250,6 +256,9 @@ def bridge_to_operator(call: CallenCall):
             # Signal that a bridged call just finished. The app-level
             # subscriber kicks off an autonomous agent review of the
             # transcript so the ticket gets subject/todos/notes updated.
+            # Ensure there's an incident before publishing — incident
+            # creation is deferred until the caller actually engages,
+            # and bridging counts as engagement.
             _event_bus.publish("call.bridge_completed", {
                 "incident_id": getattr(call, "incident_id", None),
                 "call_id": call.uuid,
@@ -275,6 +284,10 @@ def record_voicemail(call: CallenCall, prompt: str | None = None):
     different contexts (busy vs caller-chosen voicemail).
     """
     from callen.sip.media import CallRecorder
+
+    # Ensure an incident exists — voicemail = caller engaged.
+    if _ensure_incident:
+        _ensure_incident(call)
 
     if call.state == CallState.DISCONNECTED:
         return

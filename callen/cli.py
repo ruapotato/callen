@@ -540,6 +540,64 @@ def cmd_reassign_incident(args):
     _out(db.get_incident(args.incident_id), pretty=args.pretty)
 
 
+# --- Sites (GitHub Pages + Cloudflare) ---
+
+
+def _site_manager(args):
+    from callen.config import load_config
+    from callen.sites.manager import SiteManager
+    config = load_config(args.config)
+    return SiteManager(config.sites)
+
+
+def cmd_site_create(args):
+    mgr = _site_manager(args)
+    result = mgr.create_site(args.subdomain, template=args.template)
+    _out(result, pretty=args.pretty)
+
+
+def cmd_site_delete(args):
+    mgr = _site_manager(args)
+    result = mgr.delete_site(args.subdomain)
+    _out(result, pretty=args.pretty)
+
+
+def cmd_site_list(args):
+    mgr = _site_manager(args)
+    repos = mgr.list_repos()
+    dns = mgr.list_subdomains()
+    dns_map = {r["name"].split(".")[0]: r for r in dns}
+    sites = []
+    for repo in repos:
+        name = repo["name"]
+        fqdn = f"{name}.{mgr.domain}"
+        sites.append({
+            "name": name,
+            "repo": repo["url"],
+            "fqdn": fqdn,
+            "url": f"https://{fqdn}",
+            "dns": "active" if name in dns_map else "missing",
+            "updated": repo.get("updatedAt", ""),
+        })
+    _out(sites, pretty=args.pretty)
+
+
+def cmd_site_get(args):
+    mgr = _site_manager(args)
+    name = args.subdomain
+    exists = mgr.repo_exists(name)
+    dns = mgr.list_subdomains()
+    dns_match = [r for r in dns if r["name"].startswith(f"{name}.")]
+    _out({
+        "subdomain": name,
+        "fqdn": f"{name}.{mgr.domain}",
+        "url": f"https://{name}.{mgr.domain}",
+        "repo": f"https://github.com/{mgr.github_org}/{name}" if exists else None,
+        "repo_exists": exists,
+        "dns_active": len(dns_match) > 0,
+    }, pretty=args.pretty)
+
+
 # --- Search ---
 
 
@@ -1401,6 +1459,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="name to announce to the operator (defaults to contact name)",
     )
     pp.set_defaults(func=cmd_originate)
+
+    # --- Sites (GitHub Pages + Cloudflare) ---
+    pp = sub.add_parser("site-create", help="Create a new managed website (repo + DNS + Pages)")
+    pp.add_argument("subdomain", help="subdomain name (e.g. 'laura' for laura.freesoft.page)")
+    pp.add_argument("--template", help="GitHub template repo (default: config)")
+    pp.set_defaults(func=cmd_site_create)
+
+    pp = sub.add_parser("site-delete", help="Tear down a managed website (repo + DNS)")
+    pp.add_argument("subdomain")
+    pp.set_defaults(func=cmd_site_delete)
+
+    pp = sub.add_parser("site-list", help="List all managed websites")
+    pp.set_defaults(func=cmd_site_list)
+
+    pp = sub.add_parser("site-get", help="Show details for a managed website")
+    pp.add_argument("subdomain")
+    pp.set_defaults(func=cmd_site_get)
 
     return p
 

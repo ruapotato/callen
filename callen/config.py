@@ -106,6 +106,16 @@ class EmailConfig:
 
 
 @dataclass
+class SitesConfig:
+    """Managed website hosting via GitHub Pages + Cloudflare DNS."""
+    domain: str = "freesoft.page"
+    cloudflare_zone_id: str = ""
+    cloudflare_api_token: str = ""
+    github_org: str = "freesoftware-sites"
+    template_repo: str = "freesoftware-sites/template-default"
+
+
+@dataclass
 class GeneralConfig:
     db_path: str = "./callen.db"
     ivr_script: str = "./IVR.py"
@@ -123,6 +133,7 @@ class CallenConfig:
     preflight: PreflightConfig = field(default_factory=PreflightConfig)
     web: WebConfig = field(default_factory=WebConfig)
     email: EmailConfig = field(default_factory=EmailConfig)
+    sites: SitesConfig = field(default_factory=SitesConfig)
     general: GeneralConfig = field(default_factory=GeneralConfig)
 
 
@@ -157,6 +168,7 @@ def load_config(path: str = "config.toml") -> CallenConfig:
         "preflight": cfg.preflight,
         "web": cfg.web,
         "email": cfg.email,
+        "sites": cfg.sites,
         "general": cfg.general,
     }
 
