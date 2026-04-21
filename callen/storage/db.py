@@ -806,6 +806,8 @@ class Database:
             self.delete_incident(inc_id)
             removed_incidents += 1
 
+        # Clean up managed sites owned by this contact
+        conn.execute("DELETE FROM managed_sites WHERE contact_id = ?", (contact_id,))
         conn.execute("DELETE FROM contact_phones WHERE contact_id = ?", (contact_id,))
         conn.execute("DELETE FROM contact_emails WHERE contact_id = ?", (contact_id,))
         conn.execute("DELETE FROM contacts WHERE id = ?", (contact_id,))
@@ -1285,7 +1287,7 @@ class Database:
 
     def get_site_by_subdomain(self, subdomain: str) -> dict | None:
         row = self._conn().execute(
-            "SELECT * FROM managed_sites WHERE subdomain = ? AND status != 'deleted'",
+            "SELECT * FROM managed_sites WHERE subdomain = ? AND status = 'active'",
             (subdomain,),
         ).fetchone()
         return dict(row) if row else None
@@ -1293,7 +1295,7 @@ class Database:
     def get_sites_by_contact(self, contact_id: str) -> list[dict]:
         rows = self._conn().execute(
             """SELECT * FROM managed_sites
-               WHERE contact_id = ? AND status != 'deleted'
+               WHERE contact_id = ? AND status = 'active'
                ORDER BY created_at DESC""",
             (contact_id,),
         ).fetchall()
@@ -1302,7 +1304,7 @@ class Database:
     def list_managed_sites(
         self, limit: int = 100, offset: int = 0, status: str | None = None,
     ) -> list[dict]:
-        where = ["ms.status != 'deleted'"]
+        where = ["ms.status = 'active'"]
         args: list = []
         if status:
             where = ["ms.status = ?"]
@@ -1321,17 +1323,19 @@ class Database:
         return [dict(r) for r in rows]
 
     def delete_managed_site(self, subdomain: str) -> bool:
+        """Hard-delete the managed_sites row. The repo and DNS are already
+        gone by the time this is called — a soft-delete ghost row just
+        creates FK conflicts when deleting the contact later."""
         cur = self._conn().execute(
-            "UPDATE managed_sites SET status = 'deleted', updated_at = ? WHERE subdomain = ?",
-            (time.time(), subdomain),
+            "DELETE FROM managed_sites WHERE subdomain = ?",
+            (subdomain,),
         )
         self._conn().commit()
         return cur.rowcount > 0
 
     def verify_site_ownership(self, contact_id: str, subdomain: str) -> bool:
         row = self._conn().execute(
-            """SELECT 1 FROM managed_sites
-               WHERE contact_id = ? AND subdomain = ? AND status != 'deleted'""",
+            "SELECT 1 FROM managed_sites WHERE contact_id = ? AND subdomain = ?",
             (contact_id, subdomain),
         ).fetchone()
         return row is not None
