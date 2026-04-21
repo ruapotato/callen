@@ -100,8 +100,10 @@ def _website_update_flow(call):
     say(call, (
         "Please describe the changes you would like made to your website "
         "after the beep. Include as much detail as you can. "
-        "For example: update my phone number, add a new photo, "
-        "change the hours, or add a new section. "
+        "For example: update my phone number, change the hours, "
+        "or add a new section. "
+        "If you would like to add or change images, email them to us at "
+        "hello at free software dot support. "
         "When you are finished, press pound. "
         "We will get those changes implemented and send you an email "
         "when everything is updated."
