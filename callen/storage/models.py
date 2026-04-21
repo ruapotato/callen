@@ -122,3 +122,17 @@ class EmailMessage:
     body_html: str = ""
     received_at: float = 0.0
     in_reply_to: str = ""
+
+
+# --- Managed Sites ---
+
+@dataclass
+class ManagedSite:
+    id: int = 0
+    subdomain: str = ""
+    contact_id: str = ""        # CON-NNNN
+    repo_url: str = ""
+    fqdn: str = ""
+    status: str = "active"      # active / suspended / deleted
+    created_at: float = 0.0
+    updated_at: float = 0.0

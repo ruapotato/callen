@@ -52,17 +52,28 @@ class SiteManager:
     def add_subdomain(self, subdomain: str) -> dict:
         """Create a CNAME record: subdomain.freesoft.page -> github_org.github.io"""
         target = f"{self.github_org}.github.io"
-        result = self._cf_api("POST", "dns_records", {
-            "type": "CNAME",
-            "name": subdomain,
-            "content": target,
-            "proxied": True,
-            "ttl": 1,  # auto
-        })
-        log.info("DNS: %s.%s -> %s (id=%s)",
-                 subdomain, self.domain, target,
-                 result.get("result", {}).get("id", "?"))
-        return result.get("result", {})
+        try:
+            result = self._cf_api("POST", "dns_records", {
+                "type": "CNAME",
+                "name": subdomain,
+                "content": target,
+                "proxied": True,
+                "ttl": 1,  # auto
+            })
+            log.info("DNS: %s.%s -> %s (id=%s)",
+                     subdomain, self.domain, target,
+                     result.get("result", {}).get("id", "?"))
+            return result.get("result", {})
+        except urllib.error.HTTPError as e:
+            if e.code == 400:
+                # CNAME likely already exists — find and return it
+                existing = self._cf_api("GET",
+                    f"dns_records?type=CNAME&name={subdomain}.{self.domain}")
+                for rec in existing.get("result", []):
+                    log.info("DNS: %s.%s already exists (id=%s)",
+                             subdomain, self.domain, rec["id"])
+                    return rec
+            raise
 
     def remove_subdomain(self, subdomain: str) -> bool:
         """Delete the CNAME record for a subdomain."""
@@ -113,11 +124,17 @@ class SiteManager:
             except RuntimeError:
                 log.warning("Template %s not found, creating bare repo", template)
 
-        self._gh(
-            "repo", "create", repo_full,
-            "--public", "--add-readme",
-        )
-        log.info("Bare repo created: %s", repo_full)
+        try:
+            self._gh(
+                "repo", "create", repo_full,
+                "--public", "--add-readme",
+            )
+            log.info("Bare repo created: %s", repo_full)
+        except RuntimeError:
+            if self.repo_exists(name):
+                log.info("Repo %s already exists, reusing", repo_full)
+            else:
+                raise
         return f"https://github.com/{repo_full}"
 
     def delete_repo(self, name: str) -> bool:
@@ -181,6 +198,33 @@ class SiteManager:
     def _b64(text: str) -> str:
         import base64
         return base64.b64encode(text.encode()).decode()
+
+    def _upsert_file_binary(self, repo_full: str, path: str, content_bytes: bytes, message: str):
+        """Create or update a binary file in a GitHub repo."""
+        import base64
+        sha_args = []
+        try:
+            result = self._gh(
+                "api", f"repos/{repo_full}/contents/{path}",
+                "--jq", ".sha",
+            )
+            sha = result.stdout.strip()
+            if sha:
+                sha_args = ["--field", f"sha={sha}"]
+        except RuntimeError:
+            pass
+
+        b64_content = base64.b64encode(content_bytes).decode()
+        try:
+            self._gh(
+                "api", f"repos/{repo_full}/contents/{path}",
+                "--method", "PUT",
+                "--field", f"message={message}",
+                "--field", f"content={b64_content}",
+                *sha_args,
+            )
+        except RuntimeError:
+            log.warning("Failed to upsert binary %s in %s", path, repo_full)
 
     def _upsert_file(self, repo_full: str, path: str, content: str, message: str):
         """Create or update a file in a GitHub repo (handles SHA for updates)."""

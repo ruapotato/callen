@@ -550,52 +550,105 @@ def _site_manager(args):
     return SiteManager(config.sites)
 
 
+def _site_db_and_manager(args):
+    from callen.sites.manager import SiteManager
+    db, config = _db_and_config(args)
+    return db, SiteManager(config.sites)
+
+
+def _require_site_ownership(db, contact_id: str, subdomain: str):
+    if not db.verify_site_ownership(contact_id, subdomain):
+        _err(f"contact {contact_id} does not own site {subdomain}")
+
+
 def cmd_site_create(args):
-    mgr = _site_manager(args)
+    db, mgr = _site_db_and_manager(args)
     result = mgr.create_site(args.subdomain, template=args.template)
+    # Persist ownership in the DB
+    if args.contact:
+        try:
+            db.create_managed_site(
+                args.subdomain, args.contact,
+                repo_url=result.get("repo", ""),
+                fqdn=result.get("fqdn", ""),
+            )
+            result["contact_id"] = args.contact
+        except Exception as e:
+            result["db_error"] = str(e)
     _out(result, pretty=args.pretty)
 
 
 def cmd_site_delete(args):
-    mgr = _site_manager(args)
+    db, mgr = _site_db_and_manager(args)
+    if args.contact:
+        _require_site_ownership(db, args.contact, args.subdomain)
     result = mgr.delete_site(args.subdomain)
+    db.delete_managed_site(args.subdomain)
     _out(result, pretty=args.pretty)
 
 
 def cmd_site_list(args):
-    mgr = _site_manager(args)
-    repos = mgr.list_repos()
-    dns = mgr.list_subdomains()
-    dns_map = {r["name"].split(".")[0]: r for r in dns}
-    sites = []
-    for repo in repos:
-        name = repo["name"]
-        fqdn = f"{name}.{mgr.domain}"
-        sites.append({
-            "name": name,
-            "repo": repo["url"],
-            "fqdn": fqdn,
-            "url": f"https://{fqdn}",
-            "dns": "active" if name in dns_map else "missing",
-            "updated": repo.get("updatedAt", ""),
-        })
+    db, mgr = _site_db_and_manager(args)
+    if args.contact:
+        sites = db.get_sites_by_contact(args.contact)
+    else:
+        sites = db.list_managed_sites(limit=200)
     _out(sites, pretty=args.pretty)
 
 
-def cmd_site_get(args):
-    mgr = _site_manager(args)
-    name = args.subdomain
-    exists = mgr.repo_exists(name)
-    dns = mgr.list_subdomains()
-    dns_match = [r for r in dns if r["name"].startswith(f"{name}.")]
+def cmd_site_edit(args):
+    db, mgr = _site_db_and_manager(args)
+    if args.contact:
+        _require_site_ownership(db, args.contact, args.subdomain)
+    repo_full = f"{mgr.github_org}/{args.subdomain}"
+    if not mgr.repo_exists(args.subdomain):
+        _err(f"site {args.subdomain} not found")
+
+    content = args.content
+    if content == "-":
+        import sys as _sys
+        content = _sys.stdin.read()
+
+    mgr._upsert_file(repo_full, args.file, content, args.message or f"Update {args.file}")
     _out({
-        "subdomain": name,
-        "fqdn": f"{name}.{mgr.domain}",
-        "url": f"https://{name}.{mgr.domain}",
-        "repo": f"https://github.com/{mgr.github_org}/{name}" if exists else None,
-        "repo_exists": exists,
-        "dns_active": len(dns_match) > 0,
+        "site": args.subdomain,
+        "file": args.file,
+        "message": args.message or f"Update {args.file}",
+        "status": "pushed",
     }, pretty=args.pretty)
+
+
+def cmd_site_upload_image(args):
+    db, mgr = _site_db_and_manager(args)
+    _require_site_ownership(db, args.contact, args.subdomain)
+    from callen.sites.image import process_and_upload_image
+    result = process_and_upload_image(
+        image_path=args.image,
+        site_subdomain=args.subdomain,
+        manager=mgr,
+        dest_path=args.dest,
+        max_width=args.max_width,
+        commit_message=args.message or f"Upload image {args.image}",
+    )
+    _out(result, pretty=args.pretty)
+
+
+def cmd_site_get(args):
+    db, mgr = _site_db_and_manager(args)
+    site = db.get_site_by_subdomain(args.subdomain)
+    if not site:
+        exists = mgr.repo_exists(args.subdomain)
+        site = {
+            "subdomain": args.subdomain,
+            "fqdn": f"{args.subdomain}.{mgr.domain}",
+            "url": f"https://{args.subdomain}.{mgr.domain}",
+            "repo_exists": exists,
+            "tracked": False,
+        }
+    else:
+        site["url"] = f"https://{site['fqdn']}"
+        site["tracked"] = True
+    _out(site, pretty=args.pretty)
 
 
 # --- Search ---
@@ -1463,19 +1516,39 @@ def build_parser() -> argparse.ArgumentParser:
     # --- Sites (GitHub Pages + Cloudflare) ---
     pp = sub.add_parser("site-create", help="Create a new managed website (repo + DNS + Pages)")
     pp.add_argument("subdomain", help="subdomain name (e.g. 'laura' for laura.freesoft.page)")
+    pp.add_argument("--contact", help="contact ID who will own this site")
     pp.add_argument("--template", help="GitHub template repo (default: config)")
     pp.set_defaults(func=cmd_site_create)
 
+    pp = sub.add_parser("site-edit", help="Push a file to a managed site's repo")
+    pp.add_argument("subdomain")
+    pp.add_argument("file", help="path in repo (e.g. index.html, css/style.css)")
+    pp.add_argument("content", help="file content (use - to read from stdin)")
+    pp.add_argument("--contact", help="contact ID for ownership check")
+    pp.add_argument("--message", "-m", help="commit message")
+    pp.set_defaults(func=cmd_site_edit)
+
     pp = sub.add_parser("site-delete", help="Tear down a managed website (repo + DNS)")
     pp.add_argument("subdomain")
+    pp.add_argument("--contact", help="contact ID for ownership check")
     pp.set_defaults(func=cmd_site_delete)
 
     pp = sub.add_parser("site-list", help="List all managed websites")
+    pp.add_argument("--contact", help="filter to this contact's sites only")
     pp.set_defaults(func=cmd_site_list)
 
     pp = sub.add_parser("site-get", help="Show details for a managed website")
     pp.add_argument("subdomain")
     pp.set_defaults(func=cmd_site_get)
+
+    pp = sub.add_parser("site-upload-image", help="Process and upload an image to a managed site")
+    pp.add_argument("subdomain")
+    pp.add_argument("image", help="local path to image file")
+    pp.add_argument("--contact", required=True, help="contact ID for ownership check")
+    pp.add_argument("--dest", help="destination path in repo (default: images/<filename>.webp)")
+    pp.add_argument("--message", "-m", help="commit message")
+    pp.add_argument("--max-width", type=int, default=1200)
+    pp.set_defaults(func=cmd_site_upload_image)
 
     return p
 

@@ -18,7 +18,7 @@ from callen.storage.models import (
 
 log = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 7
+CURRENT_SCHEMA_VERSION = 8
 
 # --- Schema ---
 
@@ -231,6 +231,9 @@ class Database:
         if self._current_version() < 7:
             self._migrate_to_v7()
 
+        if self._current_version() < 8:
+            self._migrate_to_v8()
+
         log.info("Database ready (schema v%d): %s", self._current_version(), self._path)
 
     def _current_version(self) -> int:
@@ -296,6 +299,28 @@ class Database:
         conn.execute("INSERT OR IGNORE INTO schema_version VALUES (2)")
         conn.commit()
         log.info("Migration v1 -> v2 complete (%d calls migrated)", len(existing))
+
+    def _migrate_to_v8(self):
+        """Add managed_sites table for the freesoft.page hosting service."""
+        log.info("Migrating database schema v7 -> v8 (managed sites)")
+        conn = self._conn()
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS managed_sites (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                subdomain TEXT NOT NULL UNIQUE,
+                contact_id TEXT NOT NULL REFERENCES contacts(id),
+                repo_url TEXT DEFAULT '',
+                fqdn TEXT DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'active',
+                created_at REAL NOT NULL DEFAULT (unixepoch('subsec')),
+                updated_at REAL NOT NULL DEFAULT (unixepoch('subsec'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_managed_sites_contact ON managed_sites(contact_id);
+            CREATE INDEX IF NOT EXISTS idx_managed_sites_subdomain ON managed_sites(subdomain);
+            INSERT OR IGNORE INTO schema_version VALUES (8);
+        """)
+        conn.commit()
+        log.info("Migration v7 -> v8 complete")
 
     def _migrate_to_v7(self):
         """Add trust_level to contacts: 'unverified' (default), 'verified',
@@ -1236,6 +1261,80 @@ class Database:
             "SELECT * FROM incident_todos WHERE id = ?", (todo_id,)
         ).fetchone()
         return dict(row) if row else None
+
+    # --- Managed sites ---
+
+    def create_managed_site(
+        self, subdomain: str, contact_id: str,
+        repo_url: str = "", fqdn: str = "",
+    ) -> dict:
+        conn = self._conn()
+        if not conn.execute(
+            "SELECT 1 FROM contacts WHERE id = ?", (contact_id,)
+        ).fetchone():
+            raise ValueError(f"contact {contact_id} not found")
+        now = time.time()
+        conn.execute(
+            """INSERT INTO managed_sites
+               (subdomain, contact_id, repo_url, fqdn, status, created_at, updated_at)
+               VALUES (?, ?, ?, ?, 'active', ?, ?)""",
+            (subdomain, contact_id, repo_url, fqdn, now, now),
+        )
+        conn.commit()
+        return self.get_site_by_subdomain(subdomain)
+
+    def get_site_by_subdomain(self, subdomain: str) -> dict | None:
+        row = self._conn().execute(
+            "SELECT * FROM managed_sites WHERE subdomain = ? AND status != 'deleted'",
+            (subdomain,),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def get_sites_by_contact(self, contact_id: str) -> list[dict]:
+        rows = self._conn().execute(
+            """SELECT * FROM managed_sites
+               WHERE contact_id = ? AND status != 'deleted'
+               ORDER BY created_at DESC""",
+            (contact_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def list_managed_sites(
+        self, limit: int = 100, offset: int = 0, status: str | None = None,
+    ) -> list[dict]:
+        where = ["ms.status != 'deleted'"]
+        args: list = []
+        if status:
+            where = ["ms.status = ?"]
+            args.append(status)
+        wclause = " AND ".join(where)
+        args.extend([limit, offset])
+        rows = self._conn().execute(
+            f"""SELECT ms.*, c.display_name AS contact_name
+                FROM managed_sites ms
+                LEFT JOIN contacts c ON c.id = ms.contact_id
+                WHERE {wclause}
+                ORDER BY ms.created_at DESC
+                LIMIT ? OFFSET ?""",
+            args,
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def delete_managed_site(self, subdomain: str) -> bool:
+        cur = self._conn().execute(
+            "UPDATE managed_sites SET status = 'deleted', updated_at = ? WHERE subdomain = ?",
+            (time.time(), subdomain),
+        )
+        self._conn().commit()
+        return cur.rowcount > 0
+
+    def verify_site_ownership(self, contact_id: str, subdomain: str) -> bool:
+        row = self._conn().execute(
+            """SELECT 1 FROM managed_sites
+               WHERE contact_id = ? AND subdomain = ? AND status != 'deleted'""",
+            (contact_id, subdomain),
+        ).fetchone()
+        return row is not None
 
     # --- Emails ---
 
