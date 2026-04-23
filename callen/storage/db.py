@@ -18,7 +18,7 @@ from callen.storage.models import (
 
 log = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 8
+CURRENT_SCHEMA_VERSION = 9
 
 # --- Schema ---
 
@@ -234,6 +234,9 @@ class Database:
         if self._current_version() < 8:
             self._migrate_to_v8()
 
+        if self._current_version() < 9:
+            self._migrate_to_v9()
+
         log.info("Database ready (schema v%d): %s", self._current_version(), self._path)
 
     def _current_version(self) -> int:
@@ -299,6 +302,26 @@ class Database:
         conn.execute("INSERT OR IGNORE INTO schema_version VALUES (2)")
         conn.commit()
         log.info("Migration v1 -> v2 complete (%d calls migrated)", len(existing))
+
+    def _migrate_to_v9(self):
+        """Add call_events table for IVR flow tracking."""
+        log.info("Migrating database schema v8 -> v9 (call events)")
+        conn = self._conn()
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS call_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                call_id TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                occurred_at REAL NOT NULL DEFAULT (unixepoch('subsec')),
+                detail TEXT DEFAULT ''
+            );
+            CREATE INDEX IF NOT EXISTS idx_call_events_call ON call_events(call_id);
+            CREATE INDEX IF NOT EXISTS idx_call_events_type ON call_events(event_type);
+            CREATE INDEX IF NOT EXISTS idx_call_events_time ON call_events(occurred_at);
+            INSERT OR IGNORE INTO schema_version VALUES (9);
+        """)
+        conn.commit()
+        log.info("Migration v8 -> v9 complete")
 
     def _migrate_to_v8(self):
         """Add managed_sites table for the freesoft.page hosting service."""
@@ -913,7 +936,23 @@ class Database:
                 FROM incidents i
                 LEFT JOIN contacts c ON c.id = i.contact_id
                 {wclause}
-                ORDER BY i.updated_at DESC
+                ORDER BY
+                    CASE i.status
+                        WHEN 'open' THEN 0
+                        WHEN 'in_progress' THEN 1
+                        WHEN 'waiting' THEN 2
+                        WHEN 'resolved' THEN 3
+                        WHEN 'closed' THEN 4
+                        ELSE 5
+                    END,
+                    CASE i.priority
+                        WHEN 'urgent' THEN 0
+                        WHEN 'high' THEN 1
+                        WHEN 'normal' THEN 2
+                        WHEN 'low' THEN 3
+                        ELSE 4
+                    END,
+                    i.updated_at DESC
                 LIMIT ? OFFSET ?""",
             args,
         ).fetchall()
@@ -1263,6 +1302,52 @@ class Database:
             "SELECT * FROM incident_todos WHERE id = ?", (todo_id,)
         ).fetchone()
         return dict(row) if row else None
+
+    # --- Call events (IVR flow tracking) ---
+
+    def log_call_event(self, call_id: str, event_type: str, detail: str = ""):
+        self._conn().execute(
+            "INSERT INTO call_events (call_id, event_type, occurred_at, detail) VALUES (?, ?, ?, ?)",
+            (call_id, event_type, time.time(), detail),
+        )
+        self._conn().commit()
+
+    def get_call_events(self, call_id: str) -> list[dict]:
+        rows = self._conn().execute(
+            "SELECT * FROM call_events WHERE call_id = ? ORDER BY occurred_at",
+            (call_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def call_stats(self, since: float | None = None) -> dict:
+        """Aggregate IVR funnel stats. If since is given, only count events
+        after that unix timestamp."""
+        conn = self._conn()
+        where = ""
+        args: list = []
+        if since:
+            where = "WHERE occurred_at >= ?"
+            args = [since]
+        rows = conn.execute(
+            f"SELECT event_type, COUNT(*) n FROM call_events {where} GROUP BY event_type",
+            args,
+        ).fetchall()
+        counts = {r["event_type"]: r["n"] for r in rows}
+        total = counts.get("incoming", 0)
+        return {
+            "total_calls": total,
+            "consent_prompted": counts.get("consent_prompted", 0),
+            "consent_granted": counts.get("consent_granted", 0),
+            "consent_skipped": counts.get("consent_skipped", 0),
+            "hangup_during_consent": counts.get("hangup_during_consent", 0),
+            "menu_played": counts.get("menu_played", 0),
+            "dtmf_1_technician": counts.get("dtmf_1_technician", 0),
+            "dtmf_2_voicemail": counts.get("dtmf_2_voicemail", 0),
+            "dtmf_3_website": counts.get("dtmf_3_website", 0),
+            "hangup_during_menu": counts.get("hangup_during_menu", 0),
+            "bridged": counts.get("bridge_started", 0),
+            "blocked": counts.get("blocked", 0),
+        }
 
     # --- Managed sites ---
 

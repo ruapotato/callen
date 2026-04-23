@@ -173,6 +173,7 @@ def bridge_to_operator(call: CallenCall):
     _operator_state.auto_busy()
     call.state = CallState.BRIDGED
     call.was_bridged = True
+    log_event(call, "bridge_started")
     _event_bus.publish("call.bridged", {"call_id": call.uuid})
 
     outbound_call = None
@@ -372,6 +373,15 @@ def has_consented(call: CallenCall) -> bool:
     on a previous call. Lets the IVR script skip the consent gate for
     returning callers who already agreed once."""
     return bool(getattr(call, "prior_consent", False))
+
+
+def log_event(call: CallenCall, event_type: str, detail: str = ""):
+    """Log an IVR flow event for call funnel analytics."""
+    if _db:
+        try:
+            _db.log_call_event(call.uuid, event_type, detail)
+        except Exception:
+            log.exception("Failed to log call event %s for %s", event_type, call.uuid[:8])
 
 
 def has_website(call: CallenCall) -> bool:

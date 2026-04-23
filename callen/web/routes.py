@@ -524,3 +524,42 @@ async def get_recording(call_id, channel):
         return jsonify({"error": "recording not found"}), 404
 
     return await send_file(path, mimetype="audio/wav")
+
+
+# --- Call events / stats ---
+
+
+@bp.route("/api/call-events/<call_id>")
+async def get_call_events(call_id):
+    """IVR flow events for a specific call."""
+    return jsonify(_db().get_call_events(call_id))
+
+
+@bp.route("/api/call-stats")
+async def get_call_stats():
+    """Aggregate IVR funnel stats. ?hours=24 for last 24h, default all time."""
+    import time
+    hours = request.args.get("hours", type=int)
+    since = time.time() - (hours * 3600) if hours else None
+    return jsonify(_db().call_stats(since=since))
+
+
+@bp.route("/api/calls/recent")
+async def recent_calls():
+    """Recent calls with their IVR events for the call log view."""
+    limit = request.args.get("limit", 50, type=int)
+    db = _db()
+    rows = db._conn().execute(
+        """SELECT c.id, c.caller_id, c.direction, c.state, c.was_bridged,
+                  c.duration_seconds, c.incident_id,
+                  datetime(c.started_at, 'unixepoch', 'localtime') as started,
+                  c.voicemail_path
+           FROM calls c ORDER BY c.started_at DESC LIMIT ?""",
+        (limit,),
+    ).fetchall()
+    result = []
+    for r in rows:
+        call = dict(r)
+        call["events"] = db.get_call_events(call["id"])
+        result.append(call)
+    return jsonify(result)

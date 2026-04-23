@@ -218,6 +218,10 @@ async function loadQueue() {
                 items = await api('/contacts?limit=200');
                 renderContactsQueue(items);
                 break;
+            case 'call-log':
+                items = await api('/calls/recent?limit=100');
+                renderCallLogQueue(items);
+                break;
         }
     } catch (e) {
         list.innerHTML = `<div class="empty-state">Error: ${escapeHtml(e.message)}</div>`;
@@ -373,6 +377,89 @@ function renderContactsQueue(items) {
             ]),
         ]);
     }, 'No contacts');
+}
+
+// ============ Call log tab ============
+const EVENT_LABELS = {
+    incoming: 'Incoming',
+    blocked: 'Blocked',
+    consent_prompted: 'Consent prompted',
+    consent_granted: 'Consent granted',
+    consent_skipped: 'Returning caller',
+    hangup_during_consent: 'Hung up (consent)',
+    menu_played: 'Menu played',
+    dtmf_1_technician: 'Pressed 1 (technician)',
+    dtmf_2_voicemail: 'Pressed 2 (voicemail)',
+    dtmf_3_website: 'Pressed 3 (website)',
+    hangup_during_menu: 'Hung up (menu)',
+    bridge_started: 'Bridged to operator',
+};
+
+const EVENT_CLASS = {
+    consent_granted: 'ev-good', consent_skipped: 'ev-good',
+    dtmf_1_technician: 'ev-good', dtmf_2_voicemail: 'ev-good', dtmf_3_website: 'ev-good',
+    bridge_started: 'ev-good',
+    hangup_during_consent: 'ev-bad', hangup_during_menu: 'ev-bad', blocked: 'ev-bad',
+};
+
+function renderCallLogQueue(calls) {
+    const list = $('queue-list');
+    clear(list);
+
+    // Stats summary at top
+    const statsDiv = el('div', { class: 'call-stats' });
+    api('/call-stats?hours=168').then(s => {
+        const pct = (n, d) => d > 0 ? Math.round(100 * n / d) + '%' : '0%';
+        statsDiv.innerHTML = '';
+        statsDiv.appendChild(el('div', { class: 'stats-title' }, 'Last 7 days'));
+        const grid = el('div', { class: 'stats-grid' }, [
+            el('div', { class: 'stat' }, [el('span', { class: 'stat-n' }, String(s.total_calls)), el('span', {}, 'calls')]),
+            el('div', { class: 'stat' }, [el('span', { class: 'stat-n' }, String(s.consent_granted + s.consent_skipped)), el('span', {}, 'consented')]),
+            el('div', { class: 'stat' }, [el('span', { class: 'stat-n' }, String(s.dtmf_1_technician)), el('span', {}, 'technician')]),
+            el('div', { class: 'stat' }, [el('span', { class: 'stat-n' }, String(s.dtmf_2_voicemail)), el('span', {}, 'voicemail')]),
+            el('div', { class: 'stat' }, [el('span', { class: 'stat-n' }, String(s.hangup_during_consent)), el('span', {}, 'hung up')]),
+        ]);
+        statsDiv.appendChild(grid);
+        if (s.total_calls > 0) {
+            statsDiv.appendChild(el('div', { class: 'stats-funnel' },
+                `Consent rate: ${pct(s.consent_granted + s.consent_skipped, s.total_calls)} | ` +
+                `Engaged: ${pct(s.dtmf_1_technician + s.dtmf_2_voicemail + s.dtmf_3_website, s.total_calls)}`
+            ));
+        }
+    }).catch(() => {});
+    list.appendChild(statsDiv);
+
+    if (!calls.length) {
+        list.appendChild(el('div', { class: 'empty-state' }, 'No recent calls'));
+        return;
+    }
+
+    for (const c of calls) {
+        const events = (c.events || []).map(ev =>
+            el('span', { class: 'ev-pill ' + (EVENT_CLASS[ev.event_type] || '') },
+                EVENT_LABELS[ev.event_type] || ev.event_type)
+        );
+        const outcome = c.was_bridged ? 'bridged' :
+            c.events?.some(e => e.event_type === 'dtmf_2_voicemail') ? 'voicemail' :
+            c.events?.some(e => e.event_type === 'dtmf_3_website') ? 'website' :
+            c.events?.some(e => e.event_type.startsWith('hangup')) ? 'dropped' :
+            c.incident_id ? 'ticket' : 'no engagement';
+
+        const node = el('div', { class: 'queue-item call-log-item' }, [
+            el('div', { class: 'q-contact' }, c.caller_id || 'unknown'),
+            el('div', { class: 'q-meta' }, [
+                el('span', {}, c.started || ''),
+                el('span', {}, `${Math.round(c.duration_seconds || 0)}s`),
+                el('span', { class: `outcome-pill outcome-${outcome.replace(' ', '-')}` }, outcome),
+            ]),
+            el('div', { class: 'ev-flow' }, events),
+        ]);
+        if (c.incident_id) {
+            node.onclick = () => selectIncident(c.incident_id);
+            node.style.cursor = 'pointer';
+        }
+        list.appendChild(node);
+    }
 }
 
 // ============ Detail: incident ============

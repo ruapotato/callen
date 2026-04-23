@@ -118,6 +118,7 @@ class IVREngine:
             "is_blocked": api.is_blocked,
             "has_website": api.has_website,
             "get_website_url": api.get_website_url,
+            "log_event": api.log_event,
         }
 
         try:

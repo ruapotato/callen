@@ -19,17 +19,22 @@
 #   has_consented(call)                - True if this number already consented
 #   has_website(call)                  - True if caller has a managed site
 #   get_website_url(call)              - Returns the caller's site URL
+#   log_event(call, event_type, detail) - Log an IVR flow event for analytics
 
 
 def IVR(call):
+    log_event(call, "incoming", caller_id(call))
+
     # Hard block: quarantined numbers get no interaction at all.
     if is_blocked(call):
+        log_event(call, "blocked", caller_id(call))
         hangup(call)
         return
 
     # Recording consent: required before anything else.
     # Returning callers who already agreed skip the gate but hear a reminder.
     if has_consented(call):
+        log_event(call, "consent_skipped", "returning caller")
         say(call, (
             "Welcome back to free software support. "
             "This is a recorded call. "
@@ -40,6 +45,7 @@ def IVR(call):
         ), repeat=False)
         call.consented_to_recording = True
     else:
+        log_event(call, "consent_prompted")
         say(call, (
             "Welcome to free software support. "
             "This call is recorded and may be published as educational content. "
@@ -51,22 +57,26 @@ def IVR(call):
 
         consent = dtmf(call, count=1, timeout=20)
         if consent != '1':
+            log_event(call, "hangup_during_consent", f"key={consent}")
             say(call, "No consent received. Goodbye.", repeat=False)
             hangup(call)
             return
 
+        log_event(call, "consent_granted")
         call.consented_to_recording = True
 
     # Main menu: dynamically include option 3 if caller has a website.
     caller_has_site = has_website(call)
 
     if caller_has_site:
+        log_event(call, "menu_played", "with_website_option")
         say(call, (
             "Press 1 to speak with a technician. "
             "Press 2 to leave a voicemail. "
             "Press 3 to request changes to your website."
         ))
     else:
+        log_event(call, "menu_played", "standard")
         say(call, (
             "Press 1 to speak with a technician. "
             "Press 2 to leave a voicemail."
@@ -76,15 +86,19 @@ def IVR(call):
         key = dtmf(call, count=1, timeout=10)
 
         if key == '1':
+            log_event(call, "dtmf_1_technician")
             bridge_to_operator(call)
             return
         elif key == '2':
+            log_event(call, "dtmf_2_voicemail")
             record_voicemail(call)
             return
         elif key == '3' and caller_has_site:
+            log_event(call, "dtmf_3_website")
             _website_update_flow(call)
             return
         elif key is None:
+            log_event(call, "hangup_during_menu")
             return
         else:
             say(call, "Invalid option.", repeat=False)
@@ -96,7 +110,6 @@ def IVR(call):
 
 def _website_update_flow(call):
     """Record verbal website change instructions as a voicemail."""
-    site_url = get_website_url(call)
     say(call, (
         "Please describe the changes you would like made to your website "
         "after the beep. Include as much detail as you can. "

@@ -993,6 +993,26 @@ body {
     white-space: pre-wrap;
 }
 
+/* Call log tab */
+.call-stats { padding: 12px; background: var(--bg-elev); border-radius: var(--radius); margin-bottom: 8px; }
+.stats-title { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+.stats-grid { display: flex; gap: 12px; flex-wrap: wrap; }
+.stat { text-align: center; }
+.stat-n { display: block; font-size: 20px; font-weight: 700; color: var(--accent); }
+.stat span:last-child { font-size: 11px; color: var(--text-dim); }
+.stats-funnel { margin-top: 8px; font-size: 12px; color: var(--text-faint); }
+.call-log-item .ev-flow { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; }
+.ev-pill { font-size: 10px; padding: 1px 6px; border-radius: 8px; background: var(--bg-elev2); color: var(--text-dim); }
+.ev-pill.ev-good { background: #0f3d1f; color: var(--green); }
+.ev-pill.ev-bad { background: #3d0f11; color: var(--red); }
+.outcome-pill { font-size: 11px; padding: 1px 6px; border-radius: 8px; font-weight: 600; }
+.outcome-bridged { background: #0f3d1f; color: var(--green); }
+.outcome-voicemail { background: var(--accent-bg); color: var(--accent); }
+.outcome-website { background: #1f2d55; color: var(--blue); }
+.outcome-dropped { background: #3d0f11; color: var(--red); }
+.outcome-ticket { background: var(--bg-elev2); color: var(--text-dim); }
+.outcome-no-engagement { background: var(--bg-elev2); color: var(--text-faint); }
+
 /* Contact trust badges */
 .trust-badge {
     font-size: 11px;
