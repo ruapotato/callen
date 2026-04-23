@@ -357,6 +357,24 @@ async def contact_set_trust(contact_id):
     return jsonify(db.get_contact(contact_id))
 
 
+@bp.route("/api/contacts/<contact_id>/privacy", methods=["POST"])
+async def contact_set_privacy(contact_id):
+    """Toggle privacy mode and set nickname.
+
+    Body: {"privacy_mode": true, "nickname": "The Crafter"}
+    """
+    data = await request.get_json() or {}
+    db = _db()
+    if not db.get_contact(contact_id):
+        return jsonify({"error": "not found"}), 404
+    privacy = data.get("privacy_mode")
+    nickname = data.get("nickname")
+    if privacy is not None:
+        privacy = bool(privacy)
+    db.update_contact(contact_id, privacy_mode=privacy, nickname=nickname)
+    return jsonify(db.get_contact(contact_id))
+
+
 @bp.route("/api/contacts", methods=["POST"])
 async def create_contact():
     """Create a new contact.

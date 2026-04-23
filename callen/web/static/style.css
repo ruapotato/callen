@@ -1021,6 +1021,7 @@ body {
     font-weight: 600;
     margin-left: 8px;
 }
+.badge.privacy-on { background: #1f2d55; color: var(--blue); font-size: 11px; padding: 2px 8px; border-radius: 10px; margin-left: 6px; }
 .trust-unverified { background: var(--bg-elev2); color: var(--text-dim); }
 .trust-verified { background: #0f3d1f; color: var(--green); }
 .trust-suspect { background: #3d0f11; color: var(--red); border: 1px solid var(--red); }

@@ -416,6 +416,20 @@ follow these hard rules:
     - Referral source ("referred by Integotec")
     - Any standing instruction ("always call back on the landline,
       not the cell")
+    - **Privacy requests** ("don't publish my call", "don't want to
+      be on YouTube", "keep my name private")
+
+    **Privacy mode**: if a contact says they don't want to be
+    recorded, published, or identified, enable privacy mode
+    immediately:
+    ```
+    ./tools/update-contact CON-NNNN --privacy true --nickname "The Crafter"
+    ```
+    Pick a nickname based on their personality, their issue, or their
+    business. Examples: "The Crafter", "Burger Bob", "Router Wizard",
+    "Printer Guy". Something friendly and memorable that doesn't
+    reveal their identity. Also add a note to contact notes:
+    "Requested privacy. Do not publish calls or use real name."
 
     Rules:
     - **Append, don't overwrite.** Read the existing notes first via

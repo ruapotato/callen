@@ -247,7 +247,16 @@ def cmd_update_contact(args):
     c = db.get_contact(args.contact_id)
     if not c:
         _err(f"contact not found: {args.contact_id}")
-    db.update_contact(args.contact_id, display_name=args.name, notes=args.notes)
+    privacy = None
+    if hasattr(args, 'privacy') and args.privacy is not None:
+        privacy = args.privacy.lower() in ('true', '1', 'on', 'yes')
+    db.update_contact(
+        args.contact_id,
+        display_name=args.name,
+        notes=args.notes,
+        privacy_mode=privacy,
+        nickname=getattr(args, 'nickname', None),
+    )
     _out(db.get_contact(args.contact_id), pretty=args.pretty)
 
 
@@ -1348,6 +1357,8 @@ def build_parser() -> argparse.ArgumentParser:
     pp.add_argument("contact_id")
     pp.add_argument("--name", dest="name", help="display name")
     pp.add_argument("--notes", help="free-form notes")
+    pp.add_argument("--privacy", help="privacy mode: true/false (hides real name/phone in UI)")
+    pp.add_argument("--nickname", help="display alias when privacy mode is on")
     pp.set_defaults(func=cmd_update_contact)
 
     pp = sub.add_parser("contact-consent", help="Record consent for a contact")

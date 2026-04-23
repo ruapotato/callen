@@ -18,7 +18,7 @@ from callen.storage.models import (
 
 log = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 9
+CURRENT_SCHEMA_VERSION = 10
 
 # --- Schema ---
 
@@ -237,6 +237,9 @@ class Database:
         if self._current_version() < 9:
             self._migrate_to_v9()
 
+        if self._current_version() < 10:
+            self._migrate_to_v10()
+
         log.info("Database ready (schema v%d): %s", self._current_version(), self._path)
 
     def _current_version(self) -> int:
@@ -302,6 +305,23 @@ class Database:
         conn.execute("INSERT OR IGNORE INTO schema_version VALUES (2)")
         conn.commit()
         log.info("Migration v1 -> v2 complete (%d calls migrated)", len(existing))
+
+    def _migrate_to_v10(self):
+        """Add privacy_mode and nickname to contacts for recording privacy."""
+        log.info("Migrating database schema v9 -> v10 (contact privacy)")
+        conn = self._conn()
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(contacts)").fetchall()}
+        if "privacy_mode" not in cols:
+            conn.execute(
+                "ALTER TABLE contacts ADD COLUMN privacy_mode INTEGER NOT NULL DEFAULT 0"
+            )
+        if "nickname" not in cols:
+            conn.execute(
+                "ALTER TABLE contacts ADD COLUMN nickname TEXT DEFAULT ''"
+            )
+        conn.execute("INSERT OR IGNORE INTO schema_version VALUES (10)")
+        conn.commit()
+        log.info("Migration v9 -> v10 complete")
 
     def _migrate_to_v9(self):
         """Add call_events table for IVR flow tracking."""
@@ -741,7 +761,8 @@ class Database:
         return [dict(r) for r in rows]
 
     def update_contact(self, contact_id: str, display_name: str | None = None,
-                       notes: str | None = None):
+                       notes: str | None = None, privacy_mode: bool | None = None,
+                       nickname: str | None = None):
         sets = []
         args = []
         if display_name is not None:
@@ -750,6 +771,12 @@ class Database:
         if notes is not None:
             sets.append("notes = ?")
             args.append(notes)
+        if privacy_mode is not None:
+            sets.append("privacy_mode = ?")
+            args.append(1 if privacy_mode else 0)
+        if nickname is not None:
+            sets.append("nickname = ?")
+            args.append(nickname)
         if not sets:
             return
         args.append(contact_id)
@@ -927,6 +954,8 @@ class Database:
         rows = conn.execute(
             f"""SELECT i.*,
                        c.display_name AS contact_name,
+                       c.privacy_mode AS contact_privacy,
+                       c.nickname AS contact_nickname,
                        (SELECT e164 FROM contact_phones
                           WHERE contact_id = i.contact_id
                           ORDER BY id LIMIT 1) AS contact_phone,

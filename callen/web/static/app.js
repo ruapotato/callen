@@ -1,6 +1,27 @@
 // Callen — Support Console frontend
 // Vanilla JS SPA; no framework. Talks to the Quart backend.
 
+// ============ Privacy helpers ============
+function privacyName(contact) {
+    if (!contact) return '(unknown)';
+    if (contact.privacy_mode && contact.nickname) return contact.nickname;
+    if (contact.privacy_mode) return contact.id;
+    return contact.display_name || contact.contact_name || '(unnamed)';
+}
+
+function privacyPhone(phone, contact) {
+    if (contact && contact.privacy_mode) return '***-***-' + (phone || '').slice(-4);
+    return phone || '';
+}
+
+function privacyEmail(email, contact) {
+    if (contact && contact.privacy_mode) {
+        const parts = (email || '').split('@');
+        return parts[0].slice(0, 2) + '***@' + (parts[1] || '***');
+    }
+    return email || '';
+}
+
 // ============ State ============
 const state = {
     currentTab: 'incidents',
@@ -296,7 +317,11 @@ function renderQueueItems(list, items, builder, emptyMsg) {
 }
 
 function contactLabelFor(inc) {
-    // Prefer display name; fall back to phone, then email, then "unknown".
+    // Privacy mode: show nickname instead of real name, mask phone/email
+    if (inc.contact_privacy) {
+        if (inc.contact_nickname) return inc.contact_nickname;
+        return inc.contact_id || 'anonymous';
+    }
     const name = (inc.contact_name || '').trim();
     if (name) return name;
     if (inc.contact_phone) return inc.contact_phone;
@@ -370,7 +395,7 @@ function renderContactsQueue(items) {
             class: 'queue-item' + (selected ? ' selected' : ''),
             onclick: () => selectContact(c.id),
         }, [
-            el('div', { class: 'q-title' }, c.display_name || '(unnamed)'),
+            el('div', { class: 'q-title' }, privacyName(c)),
             el('div', { class: 'q-meta' }, [
                 el('span', { class: 'q-id' }, c.id),
                 el('span', {}, c.phones || c.emails || '—'),
@@ -861,8 +886,9 @@ async function selectContact(contactId) {
         clear(header);
         const trust = c.trust_level || 'unverified';
         header.appendChild(el('div', { class: 'detail-title' }, [
-            el('span', {}, c.display_name || '(unnamed)'),
+            el('span', {}, privacyName(c)),
             el('span', { class: 'detail-id' }, c.id),
+            c.privacy_mode ? el('span', { class: 'badge privacy-on' }, '🔒 private') : null,
             el('span', { class: `trust-badge trust-${trust}` }, trustLabel(trust)),
         ]));
         const phones = c.phones || [];
@@ -907,6 +933,10 @@ async function selectContact(contactId) {
                 onclick: () => setContactTrust(c.id, 'unverified'),
             }, 'Reset trust'));
         }
+        actions.appendChild(el('button', {
+            class: c.privacy_mode ? '' : '',
+            onclick: () => togglePrivacy(c),
+        }, c.privacy_mode ? '🔓 Disable privacy' : '🔒 Enable privacy'));
 
         const body = $('detail-body');
         clear(body);
@@ -1030,6 +1060,30 @@ async function setContactTrust(contactId, level) {
     } catch (e) { alert(`Failed: ${e.message}`); }
 }
 
+// ============ Contact privacy ============
+async function togglePrivacy(contact) {
+    const enabling = !contact.privacy_mode;
+    let nickname = contact.nickname || '';
+    if (enabling && !nickname) {
+        nickname = prompt('Nickname for this contact (shown instead of real name when recording):', '');
+        if (nickname == null) return;
+        if (!nickname.trim()) {
+            alert('A nickname is required for privacy mode.');
+            return;
+        }
+    }
+    try {
+        await api(`/contacts/${contact.id}/privacy`, {
+            method: 'POST',
+            body: JSON.stringify({
+                privacy_mode: enabling,
+                nickname: enabling ? nickname.trim() : contact.nickname,
+            }),
+        });
+        selectContact(contact.id);
+    } catch (e) { alert(`Failed: ${e.message}`); }
+}
+
 // ============ Contact channel cards (phones/emails) ============
 function renderChannelCard(contactId, kind, value, row) {
     const consented = !!row.consented_at;
@@ -1109,7 +1163,7 @@ function renderContactContext(contact, incident) {
         el('h3', {}, 'Contact'),
         el('div', { class: 'ctx-item' }, [
             el('span', { class: 'ci-main' }, contact.id),
-            el('span', { class: 'ci-extra' }, contact.display_name || '(unnamed)'),
+            el('span', { class: 'ci-extra' }, privacyName(contact)),
         ]),
     ]));
 
