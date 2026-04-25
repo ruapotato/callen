@@ -86,6 +86,12 @@ for a human-readable format where supported.
 ./tools/assign-company CON-0007 CMP-0001                   # link contact to company
 ./tools/billing                                            # monthly billing summary
 
+# Processes (scheduled + on-demand scripts)
+./tools/list-processes                                     # all registered processes
+./tools/get-process db-backup                              # details + run history
+./tools/run-process db-backup                              # execute now
+./tools/run-process db-backup --triggered-by agent         # with attribution
+
 # Todo checklist (one per incident)
 ./tools/list-todos INC-0042
 ./tools/add-todo INC-0042 "Drive to 5231 Alpine Street and install GPU"

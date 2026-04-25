@@ -18,7 +18,7 @@ from callen.storage.models import (
 
 log = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 11
+CURRENT_SCHEMA_VERSION = 12
 
 # --- Schema ---
 
@@ -243,6 +243,9 @@ class Database:
         if self._current_version() < 11:
             self._migrate_to_v11()
 
+        if self._current_version() < 12:
+            self._migrate_to_v12()
+
         log.info("Database ready (schema v%d): %s", self._current_version(), self._path)
 
     def _current_version(self) -> int:
@@ -308,6 +311,45 @@ class Database:
         conn.execute("INSERT OR IGNORE INTO schema_version VALUES (2)")
         conn.commit()
         log.info("Migration v1 -> v2 complete (%d calls migrated)", len(existing))
+
+    def _migrate_to_v12(self):
+        """Add processes and process_runs tables for scheduled/on-demand scripts."""
+        log.info("Migrating database schema v11 -> v12 (processes)")
+        conn = self._conn()
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS processes (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT DEFAULT '',
+                script_path TEXT NOT NULL,
+                cron_schedule TEXT DEFAULT '',
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at REAL NOT NULL DEFAULT (unixepoch('subsec'))
+            );
+
+            CREATE TABLE IF NOT EXISTS process_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                process_id TEXT NOT NULL REFERENCES processes(id),
+                started_at REAL NOT NULL DEFAULT (unixepoch('subsec')),
+                finished_at REAL,
+                exit_code INTEGER,
+                output TEXT DEFAULT '',
+                triggered_by TEXT DEFAULT 'manual'
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_process_runs_process ON process_runs(process_id);
+            CREATE INDEX IF NOT EXISTS idx_process_runs_time ON process_runs(started_at);
+            INSERT OR IGNORE INTO schema_version VALUES (12);
+        """)
+        # Seed the database backup process
+        conn.execute("""
+            INSERT OR IGNORE INTO processes (id, name, description, script_path, cron_schedule)
+            VALUES ('db-backup', 'Database Backup',
+                    'Backs up callen.db to backups/ with 30-day retention',
+                    'scripts/db-backup.sh', '0 17 * * *')
+        """)
+        conn.commit()
+        log.info("Migration v11 -> v12 complete")
 
     def _migrate_to_v11(self):
         """Add companies and machines tables for MSP billing."""
@@ -1524,6 +1566,67 @@ class Database:
         )
         self._conn().commit()
         return cur.rowcount > 0
+
+    # --- Processes (scheduled/on-demand scripts) ---
+
+    def list_processes(self) -> list[dict]:
+        rows = self._conn().execute(
+            "SELECT * FROM processes ORDER BY name"
+        ).fetchall()
+        result = []
+        for r in rows:
+            p = dict(r)
+            last = self._conn().execute(
+                "SELECT * FROM process_runs WHERE process_id = ? ORDER BY started_at DESC LIMIT 1",
+                (p["id"],),
+            ).fetchone()
+            p["last_run"] = dict(last) if last else None
+            result.append(p)
+        return result
+
+    def get_process(self, process_id: str) -> dict | None:
+        row = self._conn().execute(
+            "SELECT * FROM processes WHERE id = ?", (process_id,),
+        ).fetchone()
+        if not row:
+            return None
+        p = dict(row)
+        p["runs"] = [
+            dict(r) for r in self._conn().execute(
+                "SELECT * FROM process_runs WHERE process_id = ? ORDER BY started_at DESC LIMIT 20",
+                (process_id,),
+            ).fetchall()
+        ]
+        return p
+
+    def create_process(self, process_id: str, name: str, script_path: str,
+                       description: str = "", cron_schedule: str = "") -> dict:
+        self._conn().execute(
+            """INSERT INTO processes (id, name, description, script_path, cron_schedule)
+               VALUES (?, ?, ?, ?, ?)""",
+            (process_id, name, description, script_path, cron_schedule),
+        )
+        self._conn().commit()
+        return self.get_process(process_id)
+
+    def log_process_run(self, process_id: str, exit_code: int, output: str,
+                        started_at: float, triggered_by: str = "manual") -> int:
+        conn = self._conn()
+        cur = conn.execute(
+            """INSERT INTO process_runs
+               (process_id, started_at, finished_at, exit_code, output, triggered_by)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (process_id, started_at, time.time(), exit_code, output, triggered_by),
+        )
+        conn.commit()
+        return cur.lastrowid
+
+    def get_scheduled_processes(self) -> list[dict]:
+        """Processes with a cron_schedule that are enabled."""
+        rows = self._conn().execute(
+            "SELECT * FROM processes WHERE cron_schedule != '' AND enabled = 1"
+        ).fetchall()
+        return [dict(r) for r in rows]
 
     # --- Call events (IVR flow tracking) ---
 

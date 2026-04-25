@@ -993,6 +993,12 @@ body {
     white-space: pre-wrap;
 }
 
+/* Process runs */
+.process-run { background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 10px; margin-bottom: 6px; }
+.process-run.run-failed { border-color: var(--red); }
+.run-header { display: flex; gap: 8px; align-items: center; margin-bottom: 4px; font-size: 12px; }
+.run-output { font-family: var(--mono); font-size: 11px; color: var(--text-dim); background: var(--bg); padding: 8px; border-radius: var(--radius-sm); max-height: 200px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; margin: 0; }
+
 /* Company detail */
 .company-section { margin-bottom: 16px; }
 .company-section h3 { font-size: 13px; color: var(--text-dim); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }

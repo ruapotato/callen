@@ -574,6 +574,30 @@ def cmd_reassign_incident(args):
     _out(db.get_incident(args.incident_id), pretty=args.pretty)
 
 
+# --- Processes (scheduled/on-demand scripts) ---
+
+
+def cmd_list_processes(args):
+    db = _db(args)
+    _out(db.list_processes(), pretty=args.pretty)
+
+
+def cmd_get_process(args):
+    db = _db(args)
+    p = db.get_process(args.process_id)
+    if not p:
+        _err(f"process not found: {args.process_id}")
+    _out(p, pretty=args.pretty)
+
+
+def cmd_run_process(args):
+    db, config = _db_and_config(args)
+    from callen.processes import ProcessRunner
+    runner = ProcessRunner(db, project_root=".")
+    result = runner.run(args.process_id, triggered_by=args.triggered_by or "manual")
+    _out(result, pretty=args.pretty)
+
+
 # --- Companies + machines (MSP) ---
 
 
@@ -1671,6 +1695,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="name to announce to the operator (defaults to contact name)",
     )
     pp.set_defaults(func=cmd_originate)
+
+    # --- Processes ---
+    pp = sub.add_parser("list-processes", help="List all registered processes")
+    pp.set_defaults(func=cmd_list_processes)
+
+    pp = sub.add_parser("get-process", help="Show process details + run history")
+    pp.add_argument("process_id")
+    pp.set_defaults(func=cmd_get_process)
+
+    pp = sub.add_parser("run-process", help="Execute a process now")
+    pp.add_argument("process_id")
+    pp.add_argument("--triggered-by", default="manual", help="who triggered it")
+    pp.set_defaults(func=cmd_run_process)
 
     # --- Companies + machines (MSP) ---
     pp = sub.add_parser("create-company", help="Create a managed company")

@@ -243,6 +243,10 @@ async function loadQueue() {
                 items = await api('/companies');
                 renderCompaniesQueue(items);
                 break;
+            case 'processes':
+                items = await api('/processes');
+                renderProcessesQueue(items);
+                break;
             case 'call-log':
                 items = await api('/calls/recent?limit=100');
                 renderCallLogQueue(items);
@@ -406,6 +410,98 @@ function renderContactsQueue(items) {
             ]),
         ]);
     }, 'No contacts');
+}
+
+// ============ Processes tab ============
+function renderProcessesQueue(items) {
+    const list = $('queue-list');
+    renderQueueItems(list, items, (p) => {
+        const selected = state.selectedKind === 'process' && state.selectedId === p.id;
+        const last = p.last_run;
+        const lastInfo = last
+            ? `Last: ${fmtTime(last.started_at)} (exit ${last.exit_code})`
+            : 'Never run';
+        const statusClass = last ? (last.exit_code === 0 ? 'open' : 'closed') : '';
+        return el('div', {
+            class: 'queue-item' + (selected ? ' selected' : ''),
+            onclick: () => selectProcess(p.id),
+        }, [
+            el('div', { class: 'q-contact' }, p.name),
+            el('div', { class: 'q-issue' }, p.description || ''),
+            el('div', { class: 'q-meta' }, [
+                el('span', { class: 'q-id' }, p.id),
+                p.cron_schedule ? el('span', { class: 'status-pill' }, p.cron_schedule) : null,
+                el('span', { class: `status-pill ${statusClass}` }, lastInfo),
+            ]),
+        ]);
+    }, 'No processes registered.');
+}
+
+async function selectProcess(processId) {
+    state.selectedKind = 'process';
+    state.selectedId = processId;
+    loadQueue();
+    try {
+        const p = await api(`/processes/${processId}`);
+        const header = $('detail-header');
+        clear(header);
+        header.appendChild(el('div', { class: 'detail-title' }, [
+            el('span', {}, p.name),
+            el('span', { class: 'detail-id' }, p.id),
+        ]));
+        header.appendChild(el('div', { class: 'detail-meta' }, [
+            p.cron_schedule ? el('span', { class: 'status-pill' }, `cron: ${p.cron_schedule}`) : null,
+            el('span', { class: p.enabled ? 'status-pill open' : 'status-pill closed' },
+                p.enabled ? 'enabled' : 'disabled'),
+        ]));
+
+        const actions = $('detail-actions');
+        clear(actions);
+        actions.appendChild(el('button', {
+            class: 'primary',
+            onclick: () => runProcessNow(processId),
+        }, '▶ Run now'));
+
+        const body = $('detail-body');
+        clear(body);
+        body.appendChild(el('div', { class: 'company-section' }, [
+            el('h3', {}, p.description || 'No description'),
+            el('div', { class: 'channel-meta' }, `Script: ${p.script_path}`),
+        ]));
+
+        // Run history
+        const runsDiv = el('div', { class: 'company-section' }, [
+            el('h3', {}, `Run History (${(p.runs || []).length})`),
+        ]);
+        if (!(p.runs || []).length) {
+            runsDiv.appendChild(el('div', { class: 'empty-state' }, 'No runs yet.'));
+        }
+        for (const run of p.runs || []) {
+            const ok = run.exit_code === 0;
+            runsDiv.appendChild(el('div', { class: 'process-run' + (ok ? '' : ' run-failed') }, [
+                el('div', { class: 'run-header' }, [
+                    el('span', { class: ok ? 'badge consent-yes' : 'badge blocked-yes' },
+                        ok ? 'OK' : `exit ${run.exit_code}`),
+                    el('span', {}, fmtTime(run.started_at)),
+                    el('span', { class: 'channel-meta' }, run.triggered_by),
+                    run.finished_at ? el('span', { class: 'channel-meta' },
+                        `${Math.round(run.finished_at - run.started_at)}s`) : null,
+                ]),
+                el('pre', { class: 'run-output' }, run.output || '(no output)'),
+            ]));
+        }
+        body.appendChild(runsDiv);
+    } catch (e) { console.error(e); }
+}
+
+async function runProcessNow(processId) {
+    try {
+        const result = await api(`/processes/${processId}/run`, { method: 'POST' });
+        alert(result.exit_code === 0
+            ? `Process finished successfully:\n${result.output}`
+            : `Process failed (exit ${result.exit_code}):\n${result.output}`);
+        selectProcess(processId);
+    } catch (e) { alert(`Failed: ${e.message}`); }
 }
 
 // ============ Companies tab ============

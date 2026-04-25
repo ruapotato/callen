@@ -560,6 +560,33 @@ async def get_company(company_id):
     return jsonify(c)
 
 
+# --- Processes ---
+
+
+@bp.route("/api/processes")
+async def list_processes():
+    return jsonify(_db().list_processes())
+
+
+@bp.route("/api/processes/<process_id>")
+async def get_process_detail(process_id):
+    p = _db().get_process(process_id)
+    if not p:
+        return jsonify({"error": "not found"}), 404
+    return jsonify(p)
+
+
+@bp.route("/api/processes/<process_id>/run", methods=["POST"])
+async def run_process(process_id):
+    from callen.processes import ProcessRunner
+    runner = ProcessRunner(_db(), project_root=".")
+    try:
+        result = runner.run(process_id, triggered_by="dashboard")
+    except (ValueError, FileNotFoundError) as e:
+        return jsonify({"error": str(e)}), 404
+    return jsonify(result)
+
+
 # --- Call events / stats ---
 
 
