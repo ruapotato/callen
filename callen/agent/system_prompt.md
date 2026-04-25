@@ -75,6 +75,17 @@ for a human-readable format where supported.
 ./tools/site-list [--contact CON-0001]                    # list managed sites
 ./tools/site-delete <subdomain> --contact CON-0001        # tear down site
 
+# Companies + machines (MSP billing)
+./tools/create-company "Bob's Burgers" --plan managed      # hourly or managed
+./tools/get-company CMP-0001                               # details + machines + billing
+./tools/list-companies                                     # all companies
+./tools/update-company CMP-0001 --nda true --notes "..."
+./tools/add-machine CMP-0001 "front-desk-pc" --type workstation
+./tools/add-machine CMP-0001 "file-server" --type server
+./tools/remove-machine 3                                   # deactivate by machine ID
+./tools/assign-company CON-0007 CMP-0001                   # link contact to company
+./tools/billing                                            # monthly billing summary
+
 # Todo checklist (one per incident)
 ./tools/list-todos INC-0042
 ./tools/add-todo INC-0042 "Drive to 5231 Alpine Street and install GPU"

@@ -574,6 +574,106 @@ def cmd_reassign_incident(args):
     _out(db.get_incident(args.incident_id), pretty=args.pretty)
 
 
+# --- Companies + machines (MSP) ---
+
+
+def cmd_create_company(args):
+    db = _db(args)
+    c = db.create_company(
+        name=args.name,
+        plan=args.plan,
+        rate_workstation=args.rate_ws,
+        rate_server=args.rate_srv,
+        rate_hourly=args.rate_hr,
+    )
+    _out(c, pretty=args.pretty)
+
+
+def cmd_get_company(args):
+    db = _db(args)
+    c = db.get_company(args.company_id)
+    if not c:
+        _err(f"company not found: {args.company_id}")
+    _out(c, pretty=args.pretty)
+
+
+def cmd_list_companies(args):
+    db = _db(args)
+    _out(db.list_companies(), pretty=args.pretty)
+
+
+def cmd_update_company(args):
+    db = _db(args)
+    kwargs = {}
+    if args.name: kwargs["name"] = args.name
+    if args.plan: kwargs["plan"] = args.plan
+    if args.rate_ws is not None: kwargs["rate_workstation"] = args.rate_ws
+    if args.rate_srv is not None: kwargs["rate_server"] = args.rate_srv
+    if args.rate_hr is not None: kwargs["rate_hourly"] = args.rate_hr
+    if args.nda is not None: kwargs["nda_on_file"] = 1 if args.nda.lower() in ('true', '1', 'yes') else 0
+    if args.notes: kwargs["notes"] = args.notes
+    if args.billing_contact: kwargs["billing_contact_id"] = args.billing_contact
+    db.update_company(args.company_id, **kwargs)
+    _out(db.get_company(args.company_id), pretty=args.pretty)
+
+
+def cmd_delete_company(args):
+    db = _db(args)
+    if not db.delete_company(args.company_id):
+        _err(f"company not found: {args.company_id}")
+    _out({"deleted": args.company_id}, pretty=args.pretty)
+
+
+def cmd_add_machine(args):
+    db = _db(args)
+    if not db.get_company(args.company_id):
+        _err(f"company not found: {args.company_id}")
+    m = db.add_machine(
+        args.company_id, args.hostname,
+        machine_type=args.type,
+        rustdesk_id=args.rustdesk_id or "",
+        notes=args.notes or "",
+    )
+    _out(m, pretty=args.pretty)
+
+
+def cmd_remove_machine(args):
+    db = _db(args)
+    if not db.remove_machine(args.machine_id):
+        _err(f"machine not found: {args.machine_id}")
+    _out({"removed": args.machine_id}, pretty=args.pretty)
+
+
+def cmd_assign_company(args):
+    db = _db(args)
+    if not db.assign_contact_to_company(args.contact_id, args.company_id):
+        _err(f"failed to assign {args.contact_id} to {args.company_id}")
+    _out(db.get_contact(args.contact_id), pretty=args.pretty)
+
+
+def cmd_billing(args):
+    db = _db(args)
+    companies = db.list_companies()
+    total = 0.0
+    for c in companies:
+        if c["plan"] == "managed" and c["monthly_bill"] > 0:
+            total += c["monthly_bill"]
+    _out({
+        "companies": [
+            {
+                "id": c["id"],
+                "name": c["name"],
+                "plan": c["plan"],
+                "workstations": c["workstation_count"],
+                "servers": c["server_count"],
+                "monthly": c["monthly_bill"],
+            }
+            for c in companies if c["plan"] == "managed"
+        ],
+        "total_monthly": total,
+    }, pretty=args.pretty)
+
+
 # --- Sites (GitHub Pages + Cloudflare) ---
 
 
@@ -1571,6 +1671,58 @@ def build_parser() -> argparse.ArgumentParser:
         help="name to announce to the operator (defaults to contact name)",
     )
     pp.set_defaults(func=cmd_originate)
+
+    # --- Companies + machines (MSP) ---
+    pp = sub.add_parser("create-company", help="Create a managed company")
+    pp.add_argument("name")
+    pp.add_argument("--plan", default="hourly", help="hourly or managed")
+    pp.add_argument("--rate-ws", type=float, default=30.0, help="$/mo per workstation")
+    pp.add_argument("--rate-srv", type=float, default=100.0, help="$/mo per server")
+    pp.add_argument("--rate-hr", type=float, default=75.0, help="$/hr for hourly plan")
+    pp.set_defaults(func=cmd_create_company)
+
+    pp = sub.add_parser("get-company", help="Show company details + machines + billing")
+    pp.add_argument("company_id")
+    pp.set_defaults(func=cmd_get_company)
+
+    pp = sub.add_parser("list-companies", help="List all companies")
+    pp.set_defaults(func=cmd_list_companies)
+
+    pp = sub.add_parser("update-company", help="Update company fields")
+    pp.add_argument("company_id")
+    pp.add_argument("--name")
+    pp.add_argument("--plan", help="hourly or managed")
+    pp.add_argument("--rate-ws", type=float)
+    pp.add_argument("--rate-srv", type=float)
+    pp.add_argument("--rate-hr", type=float)
+    pp.add_argument("--nda", help="true/false")
+    pp.add_argument("--notes")
+    pp.add_argument("--billing-contact", help="contact ID for billing")
+    pp.set_defaults(func=cmd_update_company)
+
+    pp = sub.add_parser("delete-company", help="Delete a company and its machines")
+    pp.add_argument("company_id")
+    pp.set_defaults(func=cmd_delete_company)
+
+    pp = sub.add_parser("add-machine", help="Add a workstation or server to a company")
+    pp.add_argument("company_id")
+    pp.add_argument("hostname")
+    pp.add_argument("--type", default="workstation", help="workstation or server")
+    pp.add_argument("--rustdesk-id", help="RustDesk ID for remote access")
+    pp.add_argument("--notes")
+    pp.set_defaults(func=cmd_add_machine)
+
+    pp = sub.add_parser("remove-machine", help="Deactivate a machine")
+    pp.add_argument("machine_id", type=int)
+    pp.set_defaults(func=cmd_remove_machine)
+
+    pp = sub.add_parser("assign-company", help="Link a contact to a company")
+    pp.add_argument("contact_id")
+    pp.add_argument("company_id")
+    pp.set_defaults(func=cmd_assign_company)
+
+    pp = sub.add_parser("billing", help="Show billing summary for managed-plan companies")
+    pp.set_defaults(func=cmd_billing)
 
     # --- Sites (GitHub Pages + Cloudflare) ---
     pp = sub.add_parser("site-create", help="Create a new managed website (repo + DNS + Pages)")

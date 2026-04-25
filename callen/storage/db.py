@@ -18,7 +18,7 @@ from callen.storage.models import (
 
 log = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 10
+CURRENT_SCHEMA_VERSION = 11
 
 # --- Schema ---
 
@@ -240,6 +240,9 @@ class Database:
         if self._current_version() < 10:
             self._migrate_to_v10()
 
+        if self._current_version() < 11:
+            self._migrate_to_v11()
+
         log.info("Database ready (schema v%d): %s", self._current_version(), self._path)
 
     def _current_version(self) -> int:
@@ -305,6 +308,46 @@ class Database:
         conn.execute("INSERT OR IGNORE INTO schema_version VALUES (2)")
         conn.commit()
         log.info("Migration v1 -> v2 complete (%d calls migrated)", len(existing))
+
+    def _migrate_to_v11(self):
+        """Add companies and machines tables for MSP billing."""
+        log.info("Migrating database schema v10 -> v11 (companies + machines)")
+        conn = self._conn()
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS companies (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL DEFAULT '',
+                plan TEXT NOT NULL DEFAULT 'hourly',
+                rate_workstation REAL NOT NULL DEFAULT 30.0,
+                rate_server REAL NOT NULL DEFAULT 100.0,
+                rate_hourly REAL NOT NULL DEFAULT 75.0,
+                nda_on_file INTEGER NOT NULL DEFAULT 0,
+                billing_contact_id TEXT REFERENCES contacts(id),
+                notes TEXT DEFAULT '',
+                created_at REAL NOT NULL DEFAULT (unixepoch('subsec')),
+                updated_at REAL NOT NULL DEFAULT (unixepoch('subsec'))
+            );
+
+            CREATE TABLE IF NOT EXISTS machines (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                company_id TEXT NOT NULL REFERENCES companies(id),
+                hostname TEXT NOT NULL DEFAULT '',
+                machine_type TEXT NOT NULL DEFAULT 'workstation',
+                rustdesk_id TEXT DEFAULT '',
+                notes TEXT DEFAULT '',
+                active INTEGER NOT NULL DEFAULT 1,
+                created_at REAL NOT NULL DEFAULT (unixepoch('subsec'))
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_machines_company ON machines(company_id);
+            INSERT OR IGNORE INTO schema_version VALUES (11);
+        """)
+        # Add company_id to contacts so employees can belong to a company
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(contacts)").fetchall()}
+        if "company_id" not in cols:
+            conn.execute("ALTER TABLE contacts ADD COLUMN company_id TEXT REFERENCES companies(id)")
+        conn.commit()
+        log.info("Migration v10 -> v11 complete")
 
     def _migrate_to_v10(self):
         """Add privacy_mode and nickname to contacts for recording privacy."""
@@ -1331,6 +1374,145 @@ class Database:
             "SELECT * FROM incident_todos WHERE id = ?", (todo_id,)
         ).fetchone()
         return dict(row) if row else None
+
+    # --- Companies + machines (MSP billing) ---
+
+    def _new_company_id(self) -> str:
+        conn = self._conn()
+        row = conn.execute(
+            "SELECT id FROM companies ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        if row:
+            num = int(row["id"].split("-")[1]) + 1
+        else:
+            num = 1
+        return f"CMP-{num:04d}"
+
+    def create_company(
+        self, name: str, plan: str = "hourly",
+        billing_contact_id: str | None = None,
+        rate_workstation: float = 30.0,
+        rate_server: float = 100.0,
+        rate_hourly: float = 75.0,
+    ) -> dict:
+        company_id = self._new_company_id()
+        now = time.time()
+        self._conn().execute(
+            """INSERT INTO companies
+               (id, name, plan, billing_contact_id, rate_workstation,
+                rate_server, rate_hourly, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (company_id, name, plan, billing_contact_id,
+             rate_workstation, rate_server, rate_hourly, now, now),
+        )
+        self._conn().commit()
+        return self.get_company(company_id)
+
+    def get_company(self, company_id: str) -> dict | None:
+        conn = self._conn()
+        row = conn.execute(
+            "SELECT * FROM companies WHERE id = ?", (company_id,)
+        ).fetchone()
+        if not row:
+            return None
+        c = dict(row)
+        c["machines"] = [
+            dict(r) for r in conn.execute(
+                "SELECT * FROM machines WHERE company_id = ? AND active = 1 ORDER BY hostname",
+                (company_id,),
+            ).fetchall()
+        ]
+        c["contacts"] = [
+            dict(r) for r in conn.execute(
+                "SELECT id, display_name, nickname, privacy_mode FROM contacts WHERE company_id = ?",
+                (company_id,),
+            ).fetchall()
+        ]
+        ws = sum(1 for m in c["machines"] if m["machine_type"] == "workstation")
+        srv = sum(1 for m in c["machines"] if m["machine_type"] == "server")
+        c["workstation_count"] = ws
+        c["server_count"] = srv
+        c["monthly_bill"] = ws * c["rate_workstation"] + srv * c["rate_server"]
+        return c
+
+    def list_companies(self, limit: int = 100) -> list[dict]:
+        rows = self._conn().execute(
+            "SELECT * FROM companies ORDER BY name LIMIT ?", (limit,),
+        ).fetchall()
+        result = []
+        for row in rows:
+            c = dict(row)
+            machines = self._conn().execute(
+                "SELECT machine_type, COUNT(*) n FROM machines WHERE company_id = ? AND active = 1 GROUP BY machine_type",
+                (c["id"],),
+            ).fetchall()
+            ws = sum(r["n"] for r in machines if r["machine_type"] == "workstation")
+            srv = sum(r["n"] for r in machines if r["machine_type"] == "server")
+            c["workstation_count"] = ws
+            c["server_count"] = srv
+            c["monthly_bill"] = ws * c["rate_workstation"] + srv * c["rate_server"]
+            result.append(c)
+        return result
+
+    def update_company(self, company_id: str, **kwargs) -> bool:
+        allowed = {"name", "plan", "billing_contact_id", "rate_workstation",
+                    "rate_server", "rate_hourly", "nda_on_file", "notes"}
+        sets = []
+        args = []
+        for k, v in kwargs.items():
+            if k in allowed and v is not None:
+                sets.append(f"{k} = ?")
+                args.append(v)
+        if not sets:
+            return False
+        sets.append("updated_at = ?")
+        args.append(time.time())
+        args.append(company_id)
+        cur = self._conn().execute(
+            f"UPDATE companies SET {', '.join(sets)} WHERE id = ?", args,
+        )
+        self._conn().commit()
+        return cur.rowcount > 0
+
+    def delete_company(self, company_id: str) -> bool:
+        conn = self._conn()
+        conn.execute("DELETE FROM machines WHERE company_id = ?", (company_id,))
+        conn.execute("UPDATE contacts SET company_id = NULL WHERE company_id = ?", (company_id,))
+        cur = conn.execute("DELETE FROM companies WHERE id = ?", (company_id,))
+        conn.commit()
+        return cur.rowcount > 0
+
+    def add_machine(
+        self, company_id: str, hostname: str,
+        machine_type: str = "workstation", rustdesk_id: str = "",
+        notes: str = "",
+    ) -> dict:
+        conn = self._conn()
+        cur = conn.execute(
+            """INSERT INTO machines
+               (company_id, hostname, machine_type, rustdesk_id, notes)
+               VALUES (?, ?, ?, ?, ?)""",
+            (company_id, hostname, machine_type, rustdesk_id, notes),
+        )
+        conn.commit()
+        return dict(conn.execute(
+            "SELECT * FROM machines WHERE id = ?", (cur.lastrowid,)
+        ).fetchone())
+
+    def remove_machine(self, machine_id: int) -> bool:
+        cur = self._conn().execute(
+            "UPDATE machines SET active = 0 WHERE id = ?", (machine_id,),
+        )
+        self._conn().commit()
+        return cur.rowcount > 0
+
+    def assign_contact_to_company(self, contact_id: str, company_id: str) -> bool:
+        cur = self._conn().execute(
+            "UPDATE contacts SET company_id = ? WHERE id = ?",
+            (company_id, contact_id),
+        )
+        self._conn().commit()
+        return cur.rowcount > 0
 
     # --- Call events (IVR flow tracking) ---
 
