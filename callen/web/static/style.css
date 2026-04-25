@@ -993,6 +993,15 @@ body {
     white-space: pre-wrap;
 }
 
+/* Company detail */
+.company-section { margin-bottom: 16px; }
+.company-section h3 { font-size: 13px; color: var(--text-dim); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+.billing-card { background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; }
+.billing-line { display: flex; justify-content: space-between; padding: 4px 0; font-size: 13px; }
+.billing-amount { font-family: var(--mono); color: var(--green); }
+.billing-total { border-top: 1px solid var(--border); margin-top: 8px; padding-top: 8px; font-weight: 700; font-size: 14px; }
+.billing-total .billing-amount { font-size: 16px; }
+
 /* Call log tab */
 .call-stats { padding: 12px; background: var(--bg-elev); border-radius: var(--radius); margin-bottom: 8px; }
 .stats-title { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }

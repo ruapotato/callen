@@ -239,6 +239,10 @@ async function loadQueue() {
                 items = await api('/contacts?limit=200');
                 renderContactsQueue(items);
                 break;
+            case 'companies':
+                items = await api('/companies');
+                renderCompaniesQueue(items);
+                break;
             case 'call-log':
                 items = await api('/calls/recent?limit=100');
                 renderCallLogQueue(items);
@@ -402,6 +406,123 @@ function renderContactsQueue(items) {
             ]),
         ]);
     }, 'No contacts');
+}
+
+// ============ Companies tab ============
+function renderCompaniesQueue(items) {
+    const list = $('queue-list');
+    renderQueueItems(list, items, (c) => {
+        const selected = state.selectedKind === 'company' && state.selectedId === c.id;
+        const bill = c.plan === 'managed'
+            ? `$${c.monthly_bill}/mo (${c.workstation_count}ws + ${c.server_count}srv)`
+            : c.plan;
+        return el('div', {
+            class: 'queue-item' + (selected ? ' selected' : ''),
+            onclick: () => selectCompany(c.id),
+        }, [
+            el('div', { class: 'q-contact' }, c.name),
+            el('div', { class: 'q-issue' }, bill),
+            el('div', { class: 'q-meta' }, [
+                el('span', { class: 'q-id' }, c.id),
+                el('span', { class: 'status-pill' }, c.plan),
+            ]),
+        ]);
+    }, 'No companies yet. Use the agent to create one.');
+}
+
+async function selectCompany(companyId) {
+    state.selectedKind = 'company';
+    state.selectedId = companyId;
+    loadQueue();
+    try {
+        const c = await api(`/companies/${companyId}`);
+        const header = $('detail-header');
+        clear(header);
+        header.appendChild(el('div', { class: 'detail-title' }, [
+            el('span', {}, c.name),
+            el('span', { class: 'detail-id' }, c.id),
+        ]));
+        const bill = c.plan === 'managed'
+            ? `$${c.monthly_bill}/mo`
+            : `$${c.rate_hourly}/hr`;
+        header.appendChild(el('div', { class: 'detail-meta' }, [
+            el('span', { class: 'status-pill' }, c.plan),
+            el('span', {}, bill),
+            c.nda_on_file ? el('span', { class: 'badge consent-yes' }, 'NDA') : null,
+        ]));
+
+        const actions = $('detail-actions');
+        clear(actions);
+
+        const body = $('detail-body');
+        clear(body);
+
+        // Machines section
+        const machinesDiv = el('div', { class: 'company-section' }, [
+            el('h3', {}, `Machines (${c.workstation_count} workstations, ${c.server_count} servers)`),
+        ]);
+        if ((c.machines || []).length === 0) {
+            machinesDiv.appendChild(el('div', { class: 'empty-state' }, 'No machines. Use the agent to add some.'));
+        }
+        for (const m of c.machines || []) {
+            machinesDiv.appendChild(el('div', { class: 'channel-card' }, [
+                el('div', { class: 'channel-header' }, [
+                    el('span', { class: 'channel-kind' }, m.machine_type === 'server' ? '🖥' : '💻'),
+                    el('span', { class: 'channel-value' }, m.hostname),
+                ]),
+                el('div', { class: 'channel-badges' }, [
+                    el('span', { class: 'badge consent-yes' }, m.machine_type),
+                    m.rustdesk_id ? el('span', { class: 'channel-meta' }, `RustDesk: ${m.rustdesk_id}`) : null,
+                    m.notes ? el('span', { class: 'channel-meta' }, m.notes) : null,
+                ]),
+            ]));
+        }
+        body.appendChild(machinesDiv);
+
+        // Contacts section
+        if ((c.contacts || []).length) {
+            const contactsDiv = el('div', { class: 'company-section' }, [
+                el('h3', {}, `Contacts (${c.contacts.length})`),
+            ]);
+            for (const ct of c.contacts) {
+                contactsDiv.appendChild(el('div', {
+                    class: 'ctx-incident-item',
+                    onclick: () => selectContact(ct.id),
+                }, [
+                    el('div', {}, `${ct.id}  ${privacyName(ct)}`),
+                ]));
+            }
+            body.appendChild(contactsDiv);
+        }
+
+        // Billing breakdown
+        if (c.plan === 'managed') {
+            const billingDiv = el('div', { class: 'company-section billing-card' }, [
+                el('h3', {}, 'Monthly Billing'),
+                el('div', { class: 'billing-line' }, [
+                    el('span', {}, `${c.workstation_count} workstations x $${c.rate_workstation}`),
+                    el('span', { class: 'billing-amount' }, `$${c.workstation_count * c.rate_workstation}`),
+                ]),
+                el('div', { class: 'billing-line' }, [
+                    el('span', {}, `${c.server_count} servers x $${c.rate_server}`),
+                    el('span', { class: 'billing-amount' }, `$${c.server_count * c.rate_server}`),
+                ]),
+                el('div', { class: 'billing-line billing-total' }, [
+                    el('span', {}, 'Total'),
+                    el('span', { class: 'billing-amount' }, `$${c.monthly_bill}/mo`),
+                ]),
+            ]);
+            body.appendChild(billingDiv);
+        }
+
+        // Notes
+        if (c.notes) {
+            body.appendChild(el('div', { class: 'company-section' }, [
+                el('h3', {}, 'Notes'),
+                el('div', { class: 'ctx-notes-body' }, c.notes),
+            ]));
+        }
+    } catch (e) { console.error(e); }
 }
 
 // ============ Call log tab ============
@@ -1165,6 +1286,10 @@ function renderContactContext(contact, incident) {
             el('span', { class: 'ci-main' }, contact.id),
             el('span', { class: 'ci-extra' }, privacyName(contact)),
         ]),
+        contact.company_name ? el('div', { class: 'ctx-item' }, [
+            el('span', { class: 'ci-main' }, contact.company_id),
+            el('span', { class: 'ci-extra', onclick: () => selectCompany(contact.company_id), style: 'cursor:pointer; color:var(--accent);' }, contact.company_name),
+        ]) : null,
     ]));
 
     if (contact.notes) {

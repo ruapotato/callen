@@ -544,6 +544,22 @@ async def get_recording(call_id, channel):
     return await send_file(path, mimetype="audio/wav")
 
 
+# --- Companies ---
+
+
+@bp.route("/api/companies")
+async def list_companies():
+    return jsonify(_db().list_companies())
+
+
+@bp.route("/api/companies/<company_id>")
+async def get_company(company_id):
+    c = _db().get_company(company_id)
+    if not c:
+        return jsonify({"error": "not found"}), 404
+    return jsonify(c)
+
+
 # --- Call events / stats ---
 
 

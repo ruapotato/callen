@@ -790,6 +790,14 @@ class Database:
                 (contact_id,),
             ).fetchall()
         ]
+        # Resolve company name if linked
+        if c.get("company_id"):
+            cmp = conn.execute(
+                "SELECT name FROM companies WHERE id = ?", (c["company_id"],)
+            ).fetchone()
+            c["company_name"] = cmp["name"] if cmp else ""
+        else:
+            c["company_name"] = ""
         return c
 
     def list_contacts(self, limit: int = 100, offset: int = 0) -> list[dict]:
@@ -797,8 +805,11 @@ class Database:
         rows = conn.execute(
             """SELECT c.*,
                      (SELECT GROUP_CONCAT(e164) FROM contact_phones WHERE contact_id = c.id) AS phones,
-                     (SELECT GROUP_CONCAT(address) FROM contact_emails WHERE contact_id = c.id) AS emails
-               FROM contacts c ORDER BY c.created_at DESC LIMIT ? OFFSET ?""",
+                     (SELECT GROUP_CONCAT(address) FROM contact_emails WHERE contact_id = c.id) AS emails,
+                     cmp.name AS company_name
+               FROM contacts c
+               LEFT JOIN companies cmp ON cmp.id = c.company_id
+               ORDER BY c.created_at DESC LIMIT ? OFFSET ?""",
             (limit, offset),
         ).fetchall()
         return [dict(r) for r in rows]
