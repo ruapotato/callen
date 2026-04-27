@@ -1375,7 +1375,9 @@ class Database:
                     WHEN 'low'    THEN 3
                     ELSE 4
                   END ASC,
-                  t.created_at DESC
+                  t.incident_id ASC,
+                  t.position ASC,
+                  t.id ASC
                 LIMIT ?""",
             args,
         ).fetchall()
