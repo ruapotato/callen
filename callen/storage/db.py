@@ -1143,6 +1143,13 @@ class Database:
         conn.execute(
             f"UPDATE incidents SET {', '.join(sets)} WHERE id = ?", args,
         )
+        # Auto-complete all open todos when a ticket is closed or resolved
+        if status in ("closed", "resolved"):
+            conn.execute(
+                "UPDATE incident_todos SET done = 1, completed_at = ? "
+                "WHERE incident_id = ? AND done = 0",
+                (time.time(), incident_id),
+            )
         conn.commit()
         return True
 
