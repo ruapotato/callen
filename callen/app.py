@@ -341,6 +341,27 @@ def main(config_path: str = "config.toml"):
             pass
 
         if is_website_vm:
+            # Check for existing open website tickets from same contact
+            existing_note = ""
+            try:
+                contact_id_for_check = inc.get("contact_id") if inc else None
+                if contact_id_for_check:
+                    open_incs = db.list_incidents(
+                        status="open", contact_id=contact_id_for_check, limit=10)
+                    related = [i for i in open_incs
+                               if i["id"] != incident_id and "website" in (i.get("labels") or [])]
+                    if related:
+                        ids = ", ".join(i["id"] for i in related)
+                        existing_note = (
+                            f"\n\nNOTE: This contact has other open website tickets: {ids}. "
+                            f"Check if this voicemail is a FOLLOW-UP to one of those. "
+                            f"If so, merge this ticket into the existing one via "
+                            f"./tools/merge-incidents {incident_id} <existing_id> and work "
+                            f"on the merged ticket instead of creating duplicate work.\n"
+                        )
+            except Exception:
+                pass
+
             prompt = (
                 f"Autonomous review: a WEBSITE CHANGE voicemail was just received "
                 f"for {incident_id} (from {caller_id}).\n\n"
@@ -351,15 +372,16 @@ def main(config_path: str = "config.toml"):
                 f"1. ./tools/get-incident {incident_id} to get the contact ID\n"
                 f"2. ./tools/get-transcript --incident {incident_id} --text for full transcript\n"
                 f"3. ./tools/site-list --contact <contact_id> to find their site\n"
-                f"4. Read the current site content and understand what changes they want\n"
-                f"5. Generate the updated HTML and push via ./tools/site-edit <subdomain> "
-                f"index.html - --contact <contact_id> -m \"description of changes\"\n"
-                f"   IMPORTANT: preserve ALL existing content (menu, about, hours, etc.) "
-                f"and only modify/add what the caller asked for.\n"
-                f"6. ./tools/send-email {incident_id} --body \"...\" confirming what you changed "
+                f"4. ./tools/site-read <subdomain> index.html --pretty to get the CURRENT page\n"
+                f"5. Modify the HTML to make the requested changes while PRESERVING all "
+                f"existing content (menu, about, hours, images, scripts, etc.)\n"
+                f"6. Push via ./tools/site-edit <subdomain> index.html - --contact <contact_id> "
+                f"-m \"description of changes\"\n"
+                f"7. ./tools/send-email {incident_id} --body \"...\" confirming what you changed "
                 f"and including the site URL\n"
-                f"7. Update the incident subject to describe the changes\n\n"
+                f"8. Update the incident subject to describe the changes\n\n"
                 f"Do NOT just add a note. Actually make the changes and email confirmation."
+                f"{existing_note}"
             )
         else:
             prompt = (
@@ -407,6 +429,43 @@ def main(config_path: str = "config.toml"):
         def _wait_and_fire():
             import time as _time
             _time.sleep(2.0)
+
+            # If there's no transcript at all (very short call, nobody spoke),
+            # just close the ticket. No point running the agent on nothing.
+            segments = db.get_transcript_for_incident(incident_id)
+            if not segments:
+                log.info("Bridge %s has 0 transcript segments, auto-closing", incident_id)
+                try:
+                    db.update_incident(incident_id, status="closed",
+                                       subject="Brief call (no transcript)")
+                    db.add_incident_entry(
+                        incident_id, "note", author="system",
+                        payload={"text": "Auto-closed: bridged call with no transcript (too short or silence)."},
+                    )
+                except Exception:
+                    log.exception("Failed to auto-close empty bridge %s", incident_id)
+                return
+
+            # Check for existing open tickets from same contact to hint merging
+            existing_note = ""
+            try:
+                inc_data = db.get_incident(incident_id)
+                cid = inc_data.get("contact_id") if inc_data else None
+                if cid:
+                    open_incs = db.list_incidents(status="open", contact_id=cid, limit=10)
+                    related = [i for i in open_incs if i["id"] != incident_id]
+                    if related:
+                        ids = ", ".join(i["id"] + " (" + (i.get("subject") or "")[:40] + ")"
+                                        for i in related[:3])
+                        existing_note = (
+                            f"\n\nNOTE: This contact has other open tickets: {ids}. "
+                            f"If this call is clearly a follow-up to one of those (same topic), "
+                            f"merge this ticket into it via ./tools/merge-incidents {incident_id} "
+                            f"<existing_id> instead of leaving duplicates open.\n"
+                        )
+            except Exception:
+                pass
+
             prompt = (
                 f"Autonomous review: a bridged phone call just finished on {incident_id}.\n\n"
                 f"Do the following using the ./tools/* commands:\n"
@@ -433,6 +492,7 @@ def main(config_path: str = "config.toml"):
                 f"   system prompt for what to record.\n\n"
                 f"Respond with one sentence describing what you changed and how many todos\n"
                 f"you created."
+                f"{existing_note}"
             )
 
             async def _start():
