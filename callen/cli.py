@@ -18,6 +18,7 @@ import argparse
 import json
 import logging
 import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -807,6 +808,31 @@ def cmd_site_upload_image(args):
         commit_message=args.message or f"Upload image {args.image}",
     )
     _out(result, pretty=args.pretty)
+
+
+def cmd_site_read(args):
+    """Read a file from a site's repo."""
+    mgr = _site_manager(args)
+    repo_full = f"{mgr.github_org}/{args.subdomain}"
+    if not mgr.repo_exists(args.subdomain):
+        _err(f"site {args.subdomain} not found")
+    try:
+        result = subprocess.run(
+            ["gh", "api", f"repos/{repo_full}/contents/{args.file}",
+             "--jq", ".content"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode != 0:
+            _err(f"file not found: {args.file}")
+        import base64
+        content = base64.b64decode(result.stdout.strip()).decode("utf-8", errors="replace")
+        # For non-pretty mode, output raw content (useful for piping)
+        if args.pretty:
+            print(content)
+        else:
+            _out({"site": args.subdomain, "file": args.file, "content": content})
+    except Exception as e:
+        _err(str(e))
 
 
 def cmd_site_get(args):
@@ -1788,6 +1814,11 @@ def build_parser() -> argparse.ArgumentParser:
     pp = sub.add_parser("site-get", help="Show details for a managed website")
     pp.add_argument("subdomain")
     pp.set_defaults(func=cmd_site_get)
+
+    pp = sub.add_parser("site-read", help="Read a file from a managed site's repo")
+    pp.add_argument("subdomain")
+    pp.add_argument("file", help="file path in repo (e.g. index.html)")
+    pp.set_defaults(func=cmd_site_read)
 
     pp = sub.add_parser("site-upload-video", help="Transcode and upload a video to a managed site (H.264, max 720p)")
     pp.add_argument("subdomain")

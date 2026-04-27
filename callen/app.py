@@ -325,21 +325,58 @@ def main(config_path: str = "config.toml"):
         caller_id = call.get("caller_id") or "unknown"
         transcript_preview = (data.get("text") or "")[:400]
 
-        prompt = (
-            f"Autonomous review: a voicemail was just received and transcribed "
-            f"for {incident_id} (from {caller_id}).\n\n"
-            f"Transcript preview: {transcript_preview}\n\n"
-            f"Do the following using the ./tools/* commands:\n"
-            f"1. Run ./tools/get-transcript --incident {incident_id} --text to see the full transcript\n"
-            f"2. Decide on a clear, descriptive subject for {incident_id} that reflects what "
-            f"the caller actually said, and set it via ./tools/update-incident {incident_id} --subject \"...\"\n"
-            f"3. Add an internal note summarizing the voicemail in 2-3 sentences via "
-            f"./tools/note-incident {incident_id} \"...\"\n"
-            f"4. If the caller stated their name, set it on the contact via "
-            f"./tools/update-contact (look up the contact id via ./tools/get-incident {incident_id})\n"
-            f"5. If the voicemail sounds urgent, set priority high via ./tools/update-incident\n\n"
-            f"Respond with one sentence describing what you changed."
-        )
+        # Detect website-related voicemails: check if the incident
+        # has the 'website' label or the contact has a managed site.
+        is_website_vm = False
+        try:
+            inc = db.get_incident(incident_id)
+            labels = inc.get("labels", []) if inc else []
+            if "website" in labels:
+                is_website_vm = True
+            elif inc and inc.get("contact_id"):
+                sites = db.get_sites_by_contact(inc["contact_id"])
+                if sites:
+                    is_website_vm = True
+        except Exception:
+            pass
+
+        if is_website_vm:
+            prompt = (
+                f"Autonomous review: a WEBSITE CHANGE voicemail was just received "
+                f"for {incident_id} (from {caller_id}).\n\n"
+                f"Transcript preview: {transcript_preview}\n\n"
+                f"This caller used IVR option 3 to request changes to their website. "
+                f"Your job is to EXECUTE the changes, not just summarize.\n\n"
+                f"Do the following:\n"
+                f"1. ./tools/get-incident {incident_id} to get the contact ID\n"
+                f"2. ./tools/get-transcript --incident {incident_id} --text for full transcript\n"
+                f"3. ./tools/site-list --contact <contact_id> to find their site\n"
+                f"4. Read the current site content and understand what changes they want\n"
+                f"5. Generate the updated HTML and push via ./tools/site-edit <subdomain> "
+                f"index.html - --contact <contact_id> -m \"description of changes\"\n"
+                f"   IMPORTANT: preserve ALL existing content (menu, about, hours, etc.) "
+                f"and only modify/add what the caller asked for.\n"
+                f"6. ./tools/send-email {incident_id} --body \"...\" confirming what you changed "
+                f"and including the site URL\n"
+                f"7. Update the incident subject to describe the changes\n\n"
+                f"Do NOT just add a note. Actually make the changes and email confirmation."
+            )
+        else:
+            prompt = (
+                f"Autonomous review: a voicemail was just received and transcribed "
+                f"for {incident_id} (from {caller_id}).\n\n"
+                f"Transcript preview: {transcript_preview}\n\n"
+                f"Do the following using the ./tools/* commands:\n"
+                f"1. Run ./tools/get-transcript --incident {incident_id} --text to see the full transcript\n"
+                f"2. Decide on a clear, descriptive subject for {incident_id} that reflects what "
+                f"the caller actually said, and set it via ./tools/update-incident {incident_id} --subject \"...\"\n"
+                f"3. Add an internal note summarizing the voicemail in 2-3 sentences via "
+                f"./tools/note-incident {incident_id} \"...\"\n"
+                f"4. If the caller stated their name, set it on the contact via "
+                f"./tools/update-contact (look up the contact id via ./tools/get-incident {incident_id})\n"
+                f"5. If the voicemail sounds urgent, set priority high via ./tools/update-incident\n\n"
+                f"Respond with one sentence describing what you changed."
+            )
 
         async def _start():
             try:
