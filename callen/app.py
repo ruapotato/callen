@@ -277,6 +277,7 @@ def main(config_path: str = "config.toml"):
 
     sip_endpoint.start()
     # Register account on the SIP thread (all pjlib calls must happen there)
+    sip_account._cmd_queue = cmd_queue  # for thread-safe re-registration retries
     cmd_queue.submit(sip_account.register).result(timeout=10)
 
     # IMAP poller for hello@ inbound mail
